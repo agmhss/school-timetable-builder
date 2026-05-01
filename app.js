@@ -187,6 +187,19 @@ window.exportPDF = function() {
 
         let conflicts = [];
         let periodMap = {};
+        window.generateGrid = function() {
+        const mode = opModeSelect.value;
+        mainGrid.innerHTML = ''; 
+
+        if (mode === 'regular') {
+            renderRegularTimetable();
+        } else {
+            renderExamSchedule();
+        }
+        
+        // ADD THIS LINE HERE:
+        checkConflicts(); 
+    };
 
         // Group assignments by Period
         SCHOOL_CONFIG.assignments.forEach(assign => {
