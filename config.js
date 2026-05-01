@@ -80,3 +80,9 @@ const SCHOOL_CONFIG = {
         emisSyncRequired: true
     }
 };
+// Add this inside the SCHOOL_CONFIG object in config.js
+assignments: [
+    { period: "Period 1", class: "10-A", subject: "Mathematics", teacher: "Rajarajan" },
+    { period: "Period 2", class: "10-A", subject: "Information Tech", teacher: "Leo" },
+    // You will populate this from your Google Sheet eventually
+],
