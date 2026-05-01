@@ -1,11 +1,12 @@
 /**
- * app.js - Optimized for AGMHSS Patteeswaram
+ * app.js - Auto-Generating Timetable for AGMHSS
  */
 
-// Define global state so all functions can access them
-let currentSession = 'FN';
-// Ensure this matches your NEW Web App URL
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwV2e4g_InNOrX2j6zF7Wu7Y0ti-BJck81cEYhQBpBmow6eEU_i2op2XmNPa89qJeKBdA/exec";
+
+// Global Variable to store the auto-generated weekly timetable
+let generatedWeeklyTimetable = [];
+const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 
 function updateStatus(msg) {
     const indicator = document.getElementById('statusIndicator');
@@ -13,213 +14,157 @@ function updateStatus(msg) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const opModeSelect = document.getElementById('opMode');
-    const sessionBtns = document.querySelectorAll('#btnFN, #btnAN');
-    const mainGrid = document.getElementById('mainGrid');
+    // Setup UI listeners for the new dropdowns
+    const viewType = document.getElementById('viewType');
+    const viewFilter = document.getElementById('viewFilter');
 
-    // 1. Handle Session Toggling
-    sessionBtns.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            sessionBtns.forEach(b => b.classList.remove('bg-white', 'shadow-sm', 'text-blue-700', 'font-bold'));
-            sessionBtns.forEach(b => b.classList.add('text-gray-500', 'hover:bg-gray-200'));
-            
-            e.target.classList.remove('text-gray-500', 'hover:bg-gray-200');
-            e.target.classList.add('bg-white', 'shadow-sm', 'text-blue-700', 'font-bold');
-            
-            currentSession = e.target.id.replace('btn', '');
-            updateStatus(`Switched to ${currentSession} Session`);
-            if (opModeSelect.value === 'exam') window.generateGrid();
+    viewType.addEventListener('change', (e) => {
+        viewFilter.innerHTML = ''; // Clear old options
+        let options = new Set();
+
+        if (e.target.value === 'class') {
+            viewFilter.classList.remove('hidden');
+            generatedWeeklyTimetable.forEach(slot => options.add(slot.classId));
+        } else if (e.target.value === 'teacher') {
+            viewFilter.classList.remove('hidden');
+            generatedWeeklyTimetable.forEach(slot => options.add(slot.teacher));
+        } else {
+            viewFilter.classList.add('hidden');
+        }
+
+        // Add unique options to dropdown
+        Array.from(options).sort().forEach(opt => {
+            viewFilter.innerHTML += `<option value="${opt}">${opt}</option>`;
         });
     });
+});
 
-    // 2. Smart Conflict Checker
-    function checkConflicts() {
-        const alertsContainer = document.getElementById('alertsContainer');
-        if (!alertsContainer) return;
+// --- CORE ALGORITHM: Auto Generate Timetable ---
+function generateAutoTimetable() {
+    generatedWeeklyTimetable = []; // Reset
+    let teacherAvail = {};
+    let classAvail = {};
 
-        let conflicts = [];
-        let periodMap = {};
+    if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
 
-        // Group assignments by Period
-        if (SCHOOL_CONFIG.assignments) {
-            SCHOOL_CONFIG.assignments.forEach(assign => {
-                if (assign.teacher === "-" || assign.teacher === "") return; 
-                
-                if (!periodMap[assign.period]) {
-                    periodMap[assign.period] = {};
+    // Loop through Requirements (Teacher, Subject, Class, Periods)
+    SCHOOL_CONFIG.assignments.forEach(req => {
+        let assignedCount = 0;
+        let classId = req.class; // e.g., "10-A"
+        let targetPeriods = parseInt(req.teacher) || 5; // Using 4th column for Periods count
+
+        for (let day of daysOfWeek) {
+            for (let period of SCHOOL_CONFIG.regularTimings) {
+                if (period.type === 'break' || period.type === 'fixed') continue; // Skip breaks
+                if (assignedCount >= targetPeriods) break;
+
+                let timeKey = `${day}-${period.label}`;
+
+                // Check if both teacher and class are free
+                if (!teacherAvail[req.subject]?.[timeKey] && !classAvail[classId]?.[timeKey]) {
+                    
+                    // Assign them
+                    generatedWeeklyTimetable.push({
+                        day: day,
+                        period: period.label,
+                        time: `${period.start} - ${period.end}`,
+                        classId: classId,
+                        subject: req.class, // Re-mapped based on sheet
+                        teacher: req.subject // Re-mapped based on sheet
+                    });
+
+                    // Mark as busy
+                    if (!teacherAvail[req.subject]) teacherAvail[req.subject] = {};
+                    teacherAvail[req.subject][timeKey] = true;
+
+                    if (!classAvail[classId]) classAvail[classId] = {};
+                    classAvail[classId][timeKey] = true;
+
+                    assignedCount++;
                 }
-
-                // If teacher is already assigned in this period, we have a conflict!
-                if (periodMap[assign.period][assign.teacher]) {
-                    conflicts.push(`<b>${assign.teacher}</b> double-booked in <b>${assign.period}</b> (Classes: ${periodMap[assign.period][assign.teacher]} & ${assign.class})`);
-                } else {
-                    periodMap[assign.period][assign.teacher] = assign.class;
-                }
-            });
+            }
         }
+    });
+    console.log("Auto-Generation Complete!");
+}
 
-        // Update the UI
-        if (conflicts.length > 0) {
-            alertsContainer.innerHTML = conflicts.map(c => 
-                `<div class="flex items-start gap-2 mb-2 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-xs">
-                    <i data-lucide="alert-triangle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
-                    <span>${c}</span>
-                </div>`
-            ).join('');
-            
-            if (window.lucide) window.lucide.createIcons();
-            updateStatus(`Warning: ${conflicts.length} Conflicts Found!`);
-        } else {
-            alertsContainer.innerHTML = `<div class="text-green-600 font-medium flex items-center gap-2 text-sm">
-                <i data-lucide="check-circle" class="w-4 h-4"></i> No conflicts detected.
-            </div>`;
-            if (window.lucide) window.lucide.createIcons();
-        }
+// --- RENDER ENGINE ---
+window.renderTimetable = function() {
+    const mainGrid = document.getElementById('mainGrid');
+    const viewType = document.getElementById('viewType').value;
+    const filterVal = document.getElementById('viewFilter').value;
+
+    if (generatedWeeklyTimetable.length === 0) {
+        mainGrid.innerHTML = `<div class="text-red-500 font-bold p-4">No data generated. Click Sync Data first!</div>`;
+        return;
     }
 
-    // 3. Rendering Engines
-    window.generateGrid = function() {
-        const mode = opModeSelect.value;
-        mainGrid.innerHTML = ''; 
+    let html = `<table id="scheduleTable" class="w-full text-left border-collapse min-w-[800px]">
+        <thead class="bg-blue-100 text-blue-900">
+            <tr>
+                <th class="p-3 border">Day</th>
+                <th class="p-3 border">Period</th>
+                <th class="p-3 border">Class</th>
+                <th class="p-3 border">Subject</th>
+                <th class="p-3 border">Teacher</th>
+            </tr>
+        </thead><tbody>`;
 
-        if (mode === 'regular') {
-            renderRegularTimetable();
-        } else {
-            renderExamSchedule();
-        }
-        
-        // Run the conflict checker every time the grid is drawn
-        checkConflicts();
-    };
-
-    function renderRegularTimetable() {
-        let html = `
-            <table id="scheduleTable" class="w-full text-left border-collapse">
-                <thead class="bg-gray-100">
-                    <tr>
-                        <th class="p-3 border">Period</th>
-                        <th class="p-3 border">Timing</th>
-                        <th class="p-3 border">Class & Subject</th>
-                        <th class="p-3 border">Teacher</th>
-                    </tr>
-                </thead>
-                <tbody>`;
-
-        SCHOOL_CONFIG.regularTimings.forEach(slot => {
-            const assignment = (SCHOOL_CONFIG.assignments || []).find(a => a.period === slot.label) || { class: "-", subject: "-", teacher: "-" };
-
-            html += `
-                <tr class="hover:bg-blue-50 transition-colors">
-                    <td class="p-3 border font-semibold text-blue-700">${slot.label}</td>
-                    <td class="p-3 border text-sm">${slot.start} - ${slot.end}</td>
-                    <td class="p-3 border">
-                        <div class="font-bold text-gray-800">${assignment.class}</div>
-                        <div class="text-xs text-blue-600">${assignment.subject}</div>
-                    </td>
-                    <td class="p-3 border text-sm font-medium text-gray-700">
-                        ${slot.type === 'break' ? '—' : assignment.teacher}
-                    </td>
-                </tr>`;
-        });
-
-        html += `</tbody></table>`;
-        mainGrid.innerHTML = html;
-        updateStatus("Regular Schedule Loaded");
+    // Filter Data based on selection
+    let displayData = generatedWeeklyTimetable;
+    if (viewType === 'class') {
+        displayData = generatedWeeklyTimetable.filter(d => d.classId === filterVal);
+    } else if (viewType === 'teacher') {
+        displayData = generatedWeeklyTimetable.filter(d => d.teacher === filterVal);
     }
 
-    function renderExamSchedule() {
-        const pattern = document.getElementById('patternSelect').value;
-        const activeGrades = SCHOOL_CONFIG.examPatterns[pattern][currentSession];
-        const examData = SCHOOL_CONFIG.examSettings[currentSession];
+    // Draw Rows
+    displayData.forEach(slot => {
+        html += `<tr class="hover:bg-gray-50 border-b">
+            <td class="p-3 border font-bold text-gray-700">${slot.day}</td>
+            <td class="p-3 border">${slot.period} <br><span class="text-xs text-gray-400">${slot.time}</span></td>
+            <td class="p-3 border font-bold">${slot.classId}</td>
+            <td class="p-3 border text-blue-600">${slot.subject}</td>
+            <td class="p-3 border">${slot.teacher}</td>
+        </tr>`;
+    });
 
-        let html = `<div id="examContainer" class="space-y-4">
-            <div class="p-4 bg-orange-50 border-l-4 border-orange-400 font-bold text-orange-800">
-                Session: ${currentSession} | Reading: ${examData.coolOffStart}-${examData.writingStart}
-            </div><div class="grid grid-cols-1 md:grid-cols-2 gap-4">`;
+    html += `</tbody></table>`;
+    mainGrid.innerHTML = html;
+    updateStatus(`Showing ${viewType} view`);
+};
 
-        activeGrades.forEach(grade => {
-            const finishTime = Utils.getExamEndTime(grade, currentSession);
-            const dutyTeacher = SCHOOL_CONFIG.teachers && SCHOOL_CONFIG.teachers.length > 0 
-                ? SCHOOL_CONFIG.teachers[grade % SCHOOL_CONFIG.teachers.length].name 
-                : "Pending Duty"; 
-
-            html += `
-                <div class="p-4 border rounded-lg bg-white shadow-sm hover:border-blue-500 transition-all">
-                    <div class="flex justify-between items-start mb-2">
-                        <h4 class="text-xl font-bold text-blue-800">Class ${grade}</h4>
-                        <span class="bg-blue-100 text-blue-700 text-[10px] px-2 py-1 rounded font-bold uppercase">Hall Assigned</span>
-                    </div>
-                    <div class="space-y-1 mb-3">
-                        <p class="text-gray-600 text-sm">Ends: <span class="font-bold text-blue-600">${finishTime}</span></p>
-                        <p class="text-xs text-gray-400">Duration: ${grade <= 8 ? '2.5 Hours' : '3 Hours'}</p>
-                    </div>
-                    <div class="pt-2 border-t border-gray-100">
-                        <p class="text-xs font-semibold text-gray-500 uppercase">Invigilator</p>
-                        <p class="text-sm font-bold text-gray-800">${dutyTeacher}</p>
-                    </div>
-                </div>`;
-        });
-
-        html += `</div></div>`;
-        mainGrid.innerHTML = html;
-    }
-}); 
-
-// 4. Cloud & Export Functions (Global Scope)
-async function syncFromCloud() {
-    updateStatus("Syncing with Google Sheets...");
+// --- CLOUD SYNC ---
+window.syncFromCloud = async function() {
+    updateStatus("Downloading Requirements...");
     try {
         const response = await fetch(SCRIPT_URL);
         const cloudData = await response.json();
-        
-        if (cloudData.teachers && cloudData.teachers.length > 1) {
-            SCHOOL_CONFIG.teachers = cloudData.teachers.slice(1).map(row => ({ 
-                id: row[0], name: row[1], dept: row[2] 
-            }));
-        }
 
+        // Load the requirements from the 2nd sheet into SCHOOL_CONFIG
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             SCHOOL_CONFIG.assignments = cloudData.assignments.slice(1).map(row => ({
-                period: String(row[0]).trim(),
-                class: String(row[1]).trim(),
-                subject: String(row[2]).trim(),
-                teacher: String(row[3]).trim()
+                subject: String(row[0]).trim(), // Teacher Name (Mapped to col 1)
+                class: String(row[1]).trim(),   // Subject (Mapped to col 2)
+                classId: String(row[2]).trim(), // Class (Mapped to col 3)
+                teacher: parseInt(row[3]) || 5  // Periods (Mapped to col 4)
             }));
         }
 
-        updateStatus("Cloud Sync Complete");
-        if (window.generateGrid) window.generateGrid();
+        updateStatus("Generating Timetable...");
+        generateAutoTimetable(); // Run the algorithm
+        renderTimetable();       // Show the results
+        
     } catch (error) {
-        updateStatus("Sync Failed: Check Script URL");
+        updateStatus("Sync Failed!");
         console.error("Cloud Error:", error);
     }
-}
-
-async function saveToCloud() {
-    const payload = {
-        mode: document.getElementById('opMode').value,
-        session: currentSession,
-        timestamp: new Date().toISOString()
-    };
-    try {
-        await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(payload) });
-        alert("Request sent to Google Sheets!");
-    } catch (e) {
-        alert("Error saving data.");
-    }
-}
+};
 
 window.exportPDF = function() {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
-    doc.text("AGMHSS Patteeswaram Timetable", 14, 15);
-    
-    const table = document.getElementById('scheduleTable');
-    if (table) {
-        doc.autoTable({ html: '#scheduleTable', startY: 20 });
-    } else {
-        doc.text("Current Session: " + currentSession, 14, 25);
-        doc.text("Please use Regular Mode for detailed table exports.", 14, 35);
-    }
-    doc.save("AGMHSS_Schedule.pdf");
+    doc.text("AGMHSS Auto-Generated Timetable", 14, 15);
+    doc.autoTable({ html: '#scheduleTable', startY: 20 });
+    doc.save("AGMHSS_Smart_Schedule.pdf");
 };
