@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGMHSS Smart Timetable Builder</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons for a professional look -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body class="bg-gray-50 text-gray-800 font-sans">
+
+    <!-- Navigation Header -->
+    <nav class="bg-blue-700 text-white p-4 shadow-lg">
+        <div class="container mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <i data-lucide="calendar-days"></i>
+                AGMHSS Timetable Engine
+            </h1>
+            <div id="statusIndicator" class="text-sm bg-blue-800 px-3 py-1 rounded-full border border-blue-600">
+                System Ready
+            </div>
+        </div>
+    </nav>
+
+    <main class="container mx-auto p-6">
+        
+        <!-- Mode Configuration Section -->
+        <section class="bg-white rounded-xl shadow-md p-6 mb-8 border-t-4 border-blue-500">
+            <div class="flex flex-wrap gap-6 items-end">
+                
+                <!-- Toggle: Exam vs Regular -->
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-sm font-semibold text-gray-600 mb-2">Operation Mode</label>
+                    <select id="opMode" class="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-400 outline-none">
+                        <option value="regular">Regular Timetable</option>
+                        <option value="exam">Exam Duty Mode</option>
+                    </select>
+                </div>
+
+                <!-- Exam Pattern (Hidden by default, shown when Exam Mode is active) -->
+                <div id="examPatternGroup" class="flex-1 min-w-[200px] hidden">
+                    <label class="block text-sm font-semibold text-gray-600 mb-2">Exam Pattern</label>
+                    <select id="patternSelect" class="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-400 outline-none">
+                        <option value="Standard">Standard (6,8,10,12 - FN)</option>
+                        <option value="Alternate">Alternate (7,9,11 - FN)</option>
+                    </select>
+                </div>
+
+                <!-- Session Toggle -->
+                <div class="flex-1 min-w-[200px]">
+                    <label class="block text-sm font-semibold text-gray-600 mb-2">Session</label>
+                    <div class="flex bg-gray-100 p-1 rounded-lg">
+                        <button id="btnFN" class="flex-1 py-2 rounded-md bg-white shadow-sm text-blue-700 font-bold">FN (Morning)</button>
+                        <button id="btnAN" class="flex-1 py-2 rounded-md text-gray-500 hover:bg-gray-200">AN (Evening)</button>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <button onclick="generateGrid()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold transition-all flex items-center gap-2">
+                    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+                    Process Schedule
+                </button>
+            </div>
+        </section>
+
+        <!-- Main Workspace: Dashboard / Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            
+            <!-- Sidebar: Stats & Constraints -->
+            <aside class="lg:col-span-1 space-y-6">
+                <div class="bg-white p-4 rounded-xl shadow-sm border border-gray-200">
+                    <h3 class="font-bold text-gray-700 mb-3 flex items-center gap-2">
+                        <i data-lucide="info" class="w-4 h-4 text-blue-500"></i>
+                        Active Constraints
+                    </h3>
+                    <ul id="constraintList" class="text-sm space-y-2 text-gray-600">
+                        <li class="flex items-center gap-2">🟢 Reading Time: 15m</li>
+                        <li id="durationLabel" class="flex items-center gap-2">🟢 Duration: Mixed</li>
+                        <li class="flex items-center gap-2">🟢 No Self-Invigilation</li>
+                    </ul>
+                </div>
+                
+                <div class="bg-orange-50 p-4 rounded-xl border border-orange-200">
+                    <h3 class="font-bold text-orange-800 mb-2">Conflict Alerts</h3>
+                    <div id="alertsContainer" class="text-xs text-orange-700 space-y-1">
+                        No conflicts detected.
+                    </div>
+                </div>
+            </aside>
+
+            <!-- The Output Grid -->
+            <section class="lg:col-span-3 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                <div class="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
+                    <h2 class="font-bold text-lg">Live Schedule Matrix</h2>
+                    <div class="flex gap-2">
+                        <button class="text-xs border px-2 py-1 rounded hover:bg-white">Export PDF</button>
+                        <button class="text-xs border px-2 py-1 rounded hover:bg-white text-green-600 border-green-200">Sync Sheets</button>
+                    </div>
+                </div>
+                
+                <div id="mainGrid" class="p-6 min-h-[400px]">
+                    <!-- Dynamic content will be injected here by app.js -->
+                    <div class="flex flex-col items-center justify-center h-full text-gray-400 py-20">
+                        <i data-lucide="layout" class="w-12 h-12 mb-2 opacity-20"></i>
+                        <p>Configure settings and click "Process" to view the matrix.</p>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Project Scripts -->
+    <script src="config.js"></script>
+    <script src="utils.js"></script>
+    <script src="app.js"></script>
+    <script>
+        // Initialize Icons
+        lucide.createIcons();
+        
+        // Simple UI Interaction for the prototype
+        const opMode = document.getElementById('opMode');
+        const examPatternGroup = document.getElementById('examPatternGroup');
+
+        opMode.addEventListener('change', (e) => {
+            if (e.target.value === 'exam') {
+                examPatternGroup.classList.remove('hidden');
+            } else {
+                examPatternGroup.classList.add('hidden');
+            }
+        });
+    </script>
+</body>
+  </html>
