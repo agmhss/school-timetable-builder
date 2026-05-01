@@ -4,7 +4,7 @@
 
 // Define global state so all functions can access them
 let currentSession = 'FN';
-// Ensure this matches your NEW Web App URL after re-deploying the Apps Script!
+// Ensure this matches your NEW Web App URL
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwV2e4g_InNOrX2j6zF7Wu7Y0ti-BJck81cEYhQBpBmow6eEU_i2op2XmNPa89qJeKBdA/exec";
 
 function updateStatus(msg) {
@@ -28,10 +28,56 @@ document.addEventListener('DOMContentLoaded', () => {
             
             currentSession = e.target.id.replace('btn', '');
             updateStatus(`Switched to ${currentSession} Session`);
+            if (opModeSelect.value === 'exam') window.generateGrid();
         });
     });
 
-    // 2. Rendering Engines
+    // 2. Smart Conflict Checker
+    function checkConflicts() {
+        const alertsContainer = document.getElementById('alertsContainer');
+        if (!alertsContainer) return;
+
+        let conflicts = [];
+        let periodMap = {};
+
+        // Group assignments by Period
+        if (SCHOOL_CONFIG.assignments) {
+            SCHOOL_CONFIG.assignments.forEach(assign => {
+                if (assign.teacher === "-" || assign.teacher === "") return; 
+                
+                if (!periodMap[assign.period]) {
+                    periodMap[assign.period] = {};
+                }
+
+                // If teacher is already assigned in this period, we have a conflict!
+                if (periodMap[assign.period][assign.teacher]) {
+                    conflicts.push(`<b>${assign.teacher}</b> double-booked in <b>${assign.period}</b> (Classes: ${periodMap[assign.period][assign.teacher]} & ${assign.class})`);
+                } else {
+                    periodMap[assign.period][assign.teacher] = assign.class;
+                }
+            });
+        }
+
+        // Update the UI
+        if (conflicts.length > 0) {
+            alertsContainer.innerHTML = conflicts.map(c => 
+                `<div class="flex items-start gap-2 mb-2 p-2 bg-red-50 border border-red-200 rounded text-red-700 text-xs">
+                    <i data-lucide="alert-triangle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
+                    <span>${c}</span>
+                </div>`
+            ).join('');
+            
+            if (window.lucide) window.lucide.createIcons();
+            updateStatus(`Warning: ${conflicts.length} Conflicts Found!`);
+        } else {
+            alertsContainer.innerHTML = `<div class="text-green-600 font-medium flex items-center gap-2 text-sm">
+                <i data-lucide="check-circle" class="w-4 h-4"></i> No conflicts detected.
+            </div>`;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+
+    // 3. Rendering Engines
     window.generateGrid = function() {
         const mode = opModeSelect.value;
         mainGrid.innerHTML = ''; 
@@ -41,6 +87,9 @@ document.addEventListener('DOMContentLoaded', () => {
         } else {
             renderExamSchedule();
         }
+        
+        // Run the conflict checker every time the grid is drawn
+        checkConflicts();
     };
 
     function renderRegularTimetable() {
@@ -57,8 +106,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 <tbody>`;
 
         SCHOOL_CONFIG.regularTimings.forEach(slot => {
-            // Find assignment for this specific period
-            const assignment = SCHOOL_CONFIG.assignments.find(a => a.period === slot.label) || { class: "-", subject: "-", teacher: "-" };
+            const assignment = (SCHOOL_CONFIG.assignments || []).find(a => a.period === slot.label) || { class: "-", subject: "-", teacher: "-" };
 
             html += `
                 <tr class="hover:bg-blue-50 transition-colors">
@@ -76,7 +124,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         html += `</tbody></table>`;
         mainGrid.innerHTML = html;
-        updateStatus("Regular Schedule with Assignments Loaded");
+        updateStatus("Regular Schedule Loaded");
     }
 
     function renderExamSchedule() {
@@ -91,8 +139,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
         activeGrades.forEach(grade => {
             const finishTime = Utils.getExamEndTime(grade, currentSession);
-            // Placeholder for duty logic
-            const dutyTeacher = SCHOOL_CONFIG.teachers[grade % SCHOOL_CONFIG.teachers.length].name; 
+            const dutyTeacher = SCHOOL_CONFIG.teachers && SCHOOL_CONFIG.teachers.length > 0 
+                ? SCHOOL_CONFIG.teachers[grade % SCHOOL_CONFIG.teachers.length].name 
+                : "Pending Duty"; 
 
             html += `
                 <div class="p-4 border rounded-lg bg-white shadow-sm hover:border-blue-500 transition-all">
@@ -114,25 +163,21 @@ document.addEventListener('DOMContentLoaded', () => {
         html += `</div></div>`;
         mainGrid.innerHTML = html;
     }
-}); // <-- THIS WAS MISSING! It closes the DOMContentLoaded event listener.
+}); 
 
-// 3. Cloud & Export Functions (Global Scope)
+// 4. Cloud & Export Functions (Global Scope)
 async function syncFromCloud() {
     updateStatus("Syncing with Google Sheets...");
     try {
         const response = await fetch(SCRIPT_URL);
         const cloudData = await response.json();
         
-        // Process Teachers (if available in the cloud data)
         if (cloudData.teachers && cloudData.teachers.length > 1) {
             SCHOOL_CONFIG.teachers = cloudData.teachers.slice(1).map(row => ({ 
-                id: row[0], 
-                name: row[1], 
-                dept: row[2] 
+                id: row[0], name: row[1], dept: row[2] 
             }));
         }
 
-        // Process Assignments (if available in the cloud data)
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             SCHOOL_CONFIG.assignments = cloudData.assignments.slice(1).map(row => ({
                 period: String(row[0]).trim(),
@@ -157,7 +202,6 @@ async function saveToCloud() {
         timestamp: new Date().toISOString()
     };
     try {
-        // Using 'no-cors' mode as Apps Script doesn't always handle Preflight well
         await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', body: JSON.stringify(payload) });
         alert("Request sent to Google Sheets!");
     } catch (e) {
@@ -170,7 +214,6 @@ window.exportPDF = function() {
     const doc = new jsPDF();
     doc.text("AGMHSS Patteeswaram Timetable", 14, 15);
     
-    // Check if table exists (Regular Mode) or just print text (Exam Mode)
     const table = document.getElementById('scheduleTable');
     if (table) {
         doc.autoTable({ html: '#scheduleTable', startY: 20 });
@@ -180,60 +223,3 @@ window.exportPDF = function() {
     }
     doc.save("AGMHSS_Schedule.pdf");
 };
-// --- NEW: Smart Conflict Checker ---
-    window.checkConflicts = function() {
-        const alertsContainer = document.getElementById('alertsContainer');
-        if (!alertsContainer) return;
-
-        let conflicts = [];
-        let periodMap = {};
-        window.generateGrid = function() {
-        const mode = opModeSelect.value;
-        mainGrid.innerHTML = ''; 
-
-        if (mode === 'regular') {
-            renderRegularTimetable();
-        } else {
-            renderExamSchedule();
-        }
-        
-        // ADD THIS LINE HERE:
-        checkConflicts(); 
-    };
-
-        // Group assignments by Period
-        SCHOOL_CONFIG.assignments.forEach(assign => {
-            if (assign.teacher === "-" || assign.teacher === "") return; // Skip empty
-            
-            if (!periodMap[assign.period]) {
-                periodMap[assign.period] = {};
-            }
-
-            // If teacher is already assigned in this period, we have a conflict!
-            if (periodMap[assign.period][assign.teacher]) {
-                conflicts.push(`<b>${assign.teacher}</b> is double-booked in <b>${assign.period}</b> (Classes: ${periodMap[assign.period][assign.teacher]} & ${assign.class})`);
-            } else {
-                periodMap[assign.period][assign.teacher] = assign.class;
-            }
-        });
-
-        // Update the UI
-        if (conflicts.length > 0) {
-            alertsContainer.innerHTML = conflicts.map(c => 
-                `<div class="flex items-start gap-2 mb-2 p-2 bg-red-50 border border-red-200 rounded text-red-700">
-                    <i data-lucide="alert-triangle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
-                    <span>${c}</span>
-                </div>`
-            ).join('');
-            
-            // Re-initialize Lucide icons for the new alerts
-            if (window.lucide) window.lucide.createIcons();
-            
-            updateStatus(`Warning: ${conflicts.length} Conflicts Found!`);
-        } else {
-            alertsContainer.innerHTML = `<div class="text-green-600 font-medium flex items-center gap-2">
-                <i data-lucide="check-circle" class="w-4 h-4"></i> No conflicts detected.
-            </div>`;
-        }
-    };
-
