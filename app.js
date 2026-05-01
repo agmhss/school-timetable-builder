@@ -180,3 +180,47 @@ window.exportPDF = function() {
     }
     doc.save("AGMHSS_Schedule.pdf");
 };
+// --- NEW: Smart Conflict Checker ---
+    window.checkConflicts = function() {
+        const alertsContainer = document.getElementById('alertsContainer');
+        if (!alertsContainer) return;
+
+        let conflicts = [];
+        let periodMap = {};
+
+        // Group assignments by Period
+        SCHOOL_CONFIG.assignments.forEach(assign => {
+            if (assign.teacher === "-" || assign.teacher === "") return; // Skip empty
+            
+            if (!periodMap[assign.period]) {
+                periodMap[assign.period] = {};
+            }
+
+            // If teacher is already assigned in this period, we have a conflict!
+            if (periodMap[assign.period][assign.teacher]) {
+                conflicts.push(`<b>${assign.teacher}</b> is double-booked in <b>${assign.period}</b> (Classes: ${periodMap[assign.period][assign.teacher]} & ${assign.class})`);
+            } else {
+                periodMap[assign.period][assign.teacher] = assign.class;
+            }
+        });
+
+        // Update the UI
+        if (conflicts.length > 0) {
+            alertsContainer.innerHTML = conflicts.map(c => 
+                `<div class="flex items-start gap-2 mb-2 p-2 bg-red-50 border border-red-200 rounded text-red-700">
+                    <i data-lucide="alert-triangle" class="w-4 h-4 mt-0.5 flex-shrink-0"></i>
+                    <span>${c}</span>
+                </div>`
+            ).join('');
+            
+            // Re-initialize Lucide icons for the new alerts
+            if (window.lucide) window.lucide.createIcons();
+            
+            updateStatus(`Warning: ${conflicts.length} Conflicts Found!`);
+        } else {
+            alertsContainer.innerHTML = `<div class="text-green-600 font-medium flex items-center gap-2">
+                <i data-lucide="check-circle" class="w-4 h-4"></i> No conflicts detected.
+            </div>`;
+        }
+    };
+
