@@ -121,3 +121,17 @@ async function syncFromCloud() {
         console.error("Cloud Error:", error);
     }
 }
+async function saveToCloud() {
+    const currentData = {
+        mode: document.getElementById('opMode').value,
+        session: currentSession,
+        data: SCHOOL_CONFIG.teachers // Or your generated schedule object
+    };
+
+    const response = await fetch(SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify(currentData)
+    });
+    
+    if (response.ok) alert("Schedule archived to Google Sheets!");
+}
