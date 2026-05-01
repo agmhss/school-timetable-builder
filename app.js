@@ -121,6 +121,14 @@ async function syncFromCloud() {
         console.error("Cloud Error:", error);
     }
 }
+window.exportPDF = function() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.text("AGMHSS Patteeswaram - Timetable", 14, 15);
+    doc.autoTable({ html: '#mainGrid table', startY: 20 });
+    doc.save("AGMHSS_Timetable.pdf");
+};
+
 async function saveToCloud() {
     const currentData = {
         mode: document.getElementById('opMode').value,
