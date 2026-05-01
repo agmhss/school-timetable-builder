@@ -5,7 +5,7 @@
 // Define global state so all functions can access them
 let currentSession = 'FN';
 // Ensure this matches your NEW Web App URL after re-deploying the Apps Script!
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzTprXjKJsf64AVfEQpynXjvv1GcSf6l9pQympFih8MoS557wxKxZg3KmSWhyB9kPcRkg/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwV2e4g_InNOrX2j6zF7Wu7Y0ti-BJck81cEYhQBpBmow6eEU_i2op2XmNPa89qJeKBdA/exec";
 
 function updateStatus(msg) {
     const indicator = document.getElementById('statusIndicator');
