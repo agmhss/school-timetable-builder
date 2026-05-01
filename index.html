@@ -1,6 +1,5 @@
 <!DOCTYPE html>
 <html lang="en">
-    
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -66,10 +65,6 @@
                 </button>
             </div>
         </section>
-        <!-- Inside index.html action buttons -->
-<button onclick="saveToCloud()" class="text-xs border px-2 py-1 rounded hover:bg-white text-blue-600 border-blue-200">
-    Save to Sheet
-</button>
 
         <!-- Main Workspace: Dashboard / Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
@@ -101,8 +96,16 @@
                 <div class="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center">
                     <h2 class="font-bold text-lg">Live Schedule Matrix</h2>
                     <div class="flex gap-2">
-                        <button class="text-xs border px-2 py-1 rounded hover:bg-white">Export PDF</button>
-                        <button class="text-xs border px-2 py-1 rounded hover:bg-white text-green-600 border-green-200">Sync Sheets</button>
+                        <!-- FIX: Added onclicks to all buttons and moved Save button here -->
+                        <button onclick="saveToCloud()" class="text-xs border px-2 py-1 rounded hover:bg-white text-blue-600 border-blue-200 shadow-sm">
+                            Save to Sheet
+                        </button>
+                        <button onclick="exportPDF()" class="text-xs border px-2 py-1 rounded hover:bg-white shadow-sm border-gray-300">
+                            Export PDF
+                        </button>
+                        <button onclick="syncFromCloud()" class="text-xs border px-2 py-1 rounded hover:bg-white text-green-600 border-green-200 shadow-sm">
+                            Sync Sheets
+                        </button>
                     </div>
                 </div>
                 
@@ -138,4 +141,4 @@
         });
     </script>
 </body>
-  </html>
+</html>
