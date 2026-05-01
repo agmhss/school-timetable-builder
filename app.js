@@ -98,3 +98,26 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('statusIndicator').innerText = msg;
     }
 });
+// Add this to app.js
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzTprXjKJsf64AVfEQpynXjvv1GcSf6l9pQympFih8MoS557wxKxZg3KmSWhyB9kPcRkg/exec";
+
+async function syncFromCloud() {
+    updateStatus("Syncing with Google Sheets...");
+    try {
+        const response = await fetch(SCRIPT_URL);
+        const cloudData = await response.json();
+        
+        // Process the sheet data (skipping header)
+        SCHOOL_CONFIG.teachers = cloudData.slice(1).map(row => ({
+            id: row[0],
+            name: row[1],
+            dept: row[2]
+        }));
+        
+        updateStatus("Cloud Sync Complete");
+        generateGrid(); // Refresh the view with new data
+    } catch (error) {
+        updateStatus("Sync Failed: Use Offline Mode");
+        console.error("Cloud Error:", error);
+    }
+}
