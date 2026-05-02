@@ -31,41 +31,60 @@
         <section class="bg-white rounded-xl shadow-md p-6 mb-8 border-t-4 border-blue-500">
             <div class="flex flex-wrap gap-6 items-end">
                 
-                <!-- Toggle: Exam vs Regular -->
+                <!-- Toggle: Modes -->
                 <div class="flex-1 min-w-[200px]">
                     <label class="block text-sm font-semibold text-gray-600 mb-2">Operation Mode</label>
                     <select id="opMode" class="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-400 outline-none">
                         <option value="regular">Regular Timetable</option>
                         <option value="exam">Exam Duty Mode</option>
+                        <option value="substitution">Substitution Manager</option>
                     </select>
                 </div>
 
-                <!-- Exam Pattern (Hidden by default, shown when Exam Mode is active) -->
+                <!-- Exam Pattern (Hidden by default) -->
                 <div id="examPatternGroup" class="flex-1 min-w-[200px] hidden">
-                    <label class="block text-sm font-semibold text-gray-600 mb-2">Exam Pattern</label>
-                    <select id="patternSelect" class="w-full p-2 border rounded-lg bg-gray-50 focus:ring-2 focus:ring-orange-400 outline-none">
-                        <option value="Standard">Standard (6,8,10,12 - FN)</option>
-                        <option value="Alternate">Alternate (7,9,11 - FN)</option>
-                    </select>
+                    <label class="block text-sm font-semibold text-gray-600 mb-2">Exam Pattern / Session</label>
+                    <div class="flex gap-2">
+                        <select id="patternSelect" class="flex-1 p-2 border rounded-lg bg-gray-50 outline-none">
+                            <option value="Standard">Standard (6,8,10,12)</option>
+                            <option value="Alternate">Alternate (7,9,11)</option>
+                        </select>
+                        <div class="flex bg-gray-100 p-1 rounded-lg">
+                            <button id="btnFN" class="px-3 py-1 rounded-md bg-white shadow-sm text-blue-700 font-bold">FN</button>
+                            <button id="btnAN" class="px-3 py-1 rounded-md text-gray-500 hover:bg-gray-200">AN</button>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Session Toggle -->
-                <div class="flex-1 min-w-[200px]">
-                    <label class="block text-sm font-semibold text-gray-600 mb-2">Session</label>
-                    <div class="flex bg-gray-100 p-1 rounded-lg">
-                        <button id="btnFN" class="flex-1 py-2 rounded-md bg-white shadow-sm text-blue-700 font-bold">FN (Morning)</button>
-                        <button id="btnAN" class="flex-1 py-2 rounded-md text-gray-500 hover:bg-gray-200">AN (Evening)</button>
+                <!-- Substitution Config (Hidden by default) -->
+                <div id="substituteGroup" class="flex-1 min-w-[300px] hidden">
+                    <div class="flex gap-4">
+                        <div class="w-1/3">
+                            <label class="block text-sm font-semibold text-gray-600 mb-2">Select Day</label>
+                            <select id="subDay" class="w-full p-2 border rounded-lg bg-gray-50 outline-none">
+                                <option value="Monday">Monday</option>
+                                <option value="Tuesday">Tuesday</option>
+                                <option value="Wednesday">Wednesday</option>
+                                <option value="Thursday">Thursday</option>
+                                <option value="Friday">Friday</option>
+                            </select>
+                        </div>
+                        <div class="w-2/3">
+                            <label class="block text-sm font-semibold text-gray-600 mb-2">Absent Teachers</label>
+                            <div id="absentTeachersList" class="p-2 border rounded-lg bg-gray-50 h-[42px] overflow-y-auto flex gap-2 flex-wrap text-sm">
+                                <span class="text-gray-400">Sync data to load teachers...</span>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Action Button -->
-                <button onclick="generateGrid()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold transition-all flex items-center gap-2">
+                <button onclick="generateGrid()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-semibold transition-all flex items-center gap-2 h-[42px]">
                     <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-                    Process Schedule
+                    Process
                 </button>
             </div>
         </section>
-
         <!-- Main Workspace: Dashboard / Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-4 gap-6">
             
