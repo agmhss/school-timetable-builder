@@ -24,10 +24,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
         if (e.target.value === 'class') {
             viewFilter.classList.remove('hidden');
-            generatedWeeklyTimetable.forEach(slot => options.add(slot.classId));
+            generatedWeeklyTimetable.forEach(slot => options.add(slot.className));
         } else if (e.target.value === 'teacher') {
             viewFilter.classList.remove('hidden');
-            generatedWeeklyTimetable.forEach(slot => options.add(slot.teacher));
+            generatedWeeklyTimetable.forEach(slot => options.add(slot.teacherName));
         } else {
             viewFilter.classList.add('hidden');
         }
@@ -45,40 +45,41 @@ function generateAutoTimetable() {
     let teacherAvail = {};
     let classAvail = {};
 
-    if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
+    if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) {
+        console.warn("No data in SCHOOL_CONFIG.assignments");
+        return;
+    }
 
     // Loop through Requirements (Teacher, Subject, Class, Periods)
     SCHOOL_CONFIG.assignments.forEach(req => {
         let assignedCount = 0;
-        let classId = req.class; // e.g., "10-A"
-        let targetPeriods = parseInt(req.teacher) || 5; // Using 4th column for Periods count
 
         for (let day of daysOfWeek) {
             for (let period of SCHOOL_CONFIG.regularTimings) {
                 if (period.type === 'break' || period.type === 'fixed') continue; // Skip breaks
-                if (assignedCount >= targetPeriods) break;
+                if (assignedCount >= req.periodsPerWeek) break;
 
                 let timeKey = `${day}-${period.label}`;
 
                 // Check if both teacher and class are free
-                if (!teacherAvail[req.subject]?.[timeKey] && !classAvail[classId]?.[timeKey]) {
+                if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
                     
                     // Assign them
                     generatedWeeklyTimetable.push({
                         day: day,
                         period: period.label,
                         time: `${period.start} - ${period.end}`,
-                        classId: classId,
-                        subject: req.class, // Re-mapped based on sheet
-                        teacher: req.subject // Re-mapped based on sheet
+                        className: req.className,
+                        subjectName: req.subjectName,
+                        teacherName: req.teacherName
                     });
 
                     // Mark as busy
-                    if (!teacherAvail[req.subject]) teacherAvail[req.subject] = {};
-                    teacherAvail[req.subject][timeKey] = true;
+                    if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
+                    teacherAvail[req.teacherName][timeKey] = true;
 
-                    if (!classAvail[classId]) classAvail[classId] = {};
-                    classAvail[classId][timeKey] = true;
+                    if (!classAvail[req.className]) classAvail[req.className] = {};
+                    classAvail[req.className][timeKey] = true;
 
                     assignedCount++;
                 }
@@ -113,9 +114,9 @@ window.renderTimetable = function() {
     // Filter Data based on selection
     let displayData = generatedWeeklyTimetable;
     if (viewType === 'class') {
-        displayData = generatedWeeklyTimetable.filter(d => d.classId === filterVal);
+        displayData = generatedWeeklyTimetable.filter(d => d.className === filterVal);
     } else if (viewType === 'teacher') {
-        displayData = generatedWeeklyTimetable.filter(d => d.teacher === filterVal);
+        displayData = generatedWeeklyTimetable.filter(d => d.teacherName === filterVal);
     }
 
     // Draw Rows
@@ -123,9 +124,9 @@ window.renderTimetable = function() {
         html += `<tr class="hover:bg-gray-50 border-b">
             <td class="p-3 border font-bold text-gray-700">${slot.day}</td>
             <td class="p-3 border">${slot.period} <br><span class="text-xs text-gray-400">${slot.time}</span></td>
-            <td class="p-3 border font-bold">${slot.classId}</td>
-            <td class="p-3 border text-blue-600">${slot.subject}</td>
-            <td class="p-3 border">${slot.teacher}</td>
+            <td class="p-3 border font-bold">${slot.className}</td>
+            <td class="p-3 border text-blue-600">${slot.subjectName}</td>
+            <td class="p-3 border">${slot.teacherName}</td>
         </tr>`;
     });
 
@@ -141,23 +142,27 @@ window.syncFromCloud = async function() {
         const response = await fetch(SCRIPT_URL);
         const cloudData = await response.json();
 
-        // Load the requirements from the 2nd sheet into SCHOOL_CONFIG
+        // Properly map the Google Sheet columns to readable variable names
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             SCHOOL_CONFIG.assignments = cloudData.assignments.slice(1).map(row => ({
-                subject: String(row[0]).trim(), // Teacher Name (Mapped to col 1)
-                class: String(row[1]).trim(),   // Subject (Mapped to col 2)
-                classId: String(row[2]).trim(), // Class (Mapped to col 3)
-                teacher: parseInt(row[3]) || 5  // Periods (Mapped to col 4)
+                teacherName: String(row[0]).trim(),  // Teacher Name (Col A)
+                subjectName: String(row[1]).trim(),  // Subject (Col B)
+                className: String(row[2]).trim(),    // Class (Col C)
+                periodsPerWeek: parseInt(row[3]) || 5 // Periods (Col D)
             }));
+            
+            updateStatus("Generating Timetable...");
+            generateAutoTimetable(); // Run the algorithm
+            renderTimetable();       // Show the results
+            
+        } else {
+            updateStatus("No assignment data found.");
         }
-
-        updateStatus("Generating Timetable...");
-        generateAutoTimetable(); // Run the algorithm
-        renderTimetable();       // Show the results
         
     } catch (error) {
         updateStatus("Sync Failed!");
         console.error("Cloud Error:", error);
+        alert("Sync Failed! Please check if your Web App URL is correct and deployed for 'Anyone'.");
     }
 };
 
