@@ -238,6 +238,9 @@ function renderRegularTimetable() {
     updateStatus(`Showing Grid for: ${filterVal}`);
 }
 
+// Global Tracker to remember duty counts across sessions
+window.examDutyTracker = window.examDutyTracker || {};
+
 // --- RENDER: EXAM SCHEDULE VIEW ---
 function renderExamSchedule() {
     const pattern = document.getElementById('patternSelect').value;
@@ -245,13 +248,23 @@ function renderExamSchedule() {
     const examData = SCHOOL_CONFIG.examSettings[currentSession];
     const mainGrid = document.getElementById('mainGrid');
 
-    let availableTeachers = [];
+    // 1. ஆசிரியர்களின் Profile-ஐ உருவாக்குதல் (அவர்கள் என்ன பாடம் எடுக்கிறார்கள் + எத்தனை டியூட்டி பார்த்துள்ளார்கள்)
+    let teacherProfiles = {};
     if (SCHOOL_CONFIG.assignments && SCHOOL_CONFIG.assignments.length > 0) {
-        const allTeachers = SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', ''));
-        availableTeachers = [...new Set(allTeachers)]; 
+        SCHOOL_CONFIG.assignments.forEach(req => {
+            let name = req.teacherName.replace('⭐ ', '');
+            if (!teacherProfiles[name]) {
+                teacherProfiles[name] = { 
+                    subjects: new Set(), 
+                    duties: window.examDutyTracker[name] || 0 // பழைய டியூட்டி கணக்கை எடுத்தல் 
+                };
+            }
+            teacherProfiles[name].subjects.add(req.subjectName);
+        });
     }
 
-    if (availableTeachers.length === 0) {
+    let allTeachers = Object.keys(teacherProfiles);
+    if (allTeachers.length === 0) {
         mainGrid.innerHTML = `<div class="text-red-500 font-bold p-4">No teachers found. Click Sync Data first!</div>`;
         return;
     }
@@ -273,7 +286,26 @@ function renderExamSchedule() {
         const isJunior = grade <= 8;
         const finishTime = isJunior ? examData.juniorEnd : examData.seniorEnd;
         const durationText = isJunior ? '2.5 Hours' : '3.0 Hours';
-        const dutyTeacher = availableTeachers[index % availableTeachers.length];
+
+        // குறிப்பு: ஒரு உண்மையான சிஸ்டத்தில் "இன்று என்ன தேர்வு" என்ற டேட்டாவை Sheet-ல் இருந்து எடுக்க வேண்டும்.
+        // தற்போதைக்கு அல்காரிதம் வேலை செய்ய ஒரு Placeholder வைத்துள்ளோம்.
+        let currentExamSubject = "English"; // இதை எதிர்காலத்தில் Exam Timetable-உடன் இணைக்கலாம்
+
+        // 2. Subject Exemption (பாடம் எடுப்பவரை வடிகட்டுதல்)
+        let eligibleTeachers = allTeachers.filter(t => !teacherProfiles[t].subjects.has(currentExamSubject));
+        
+        // ஒருவேளை அனைவருமே அந்தப் பாடத்தை எடுப்பவர்களாக இருந்தால், வேறு வழியின்றி அனைவரையும் எடுத்துக்கொள்ளும் Fallback
+        if (eligibleTeachers.length === 0) eligibleTeachers = allTeachers;
+
+        // 3. Equal Distribution (குறைவான டியூட்டி பார்த்தவரை முன்னால் கொண்டு வருதல்)
+        eligibleTeachers.sort((a, b) => teacherProfiles[a].duties - teacherProfiles[b].duties);
+
+        // மிகக் குறைவான டியூட்டி பார்த்த ஆசிரியரைத் தேர்ந்தெடுத்தல்
+        let dutyTeacher = eligibleTeachers[0];
+
+        // 4. அவருக்கு ஒரு டியூட்டியைக் கணக்கில் ஏற்றுதல்
+        teacherProfiles[dutyTeacher].duties += 1;
+        window.examDutyTracker[dutyTeacher] = teacherProfiles[dutyTeacher].duties; // Global-ஆக சேமித்தல்
 
         html += `
             <div class="p-5 border border-gray-200 rounded-xl bg-white shadow-sm hover:border-blue-400 hover:shadow-md transition-all relative overflow-hidden">
@@ -314,9 +346,8 @@ function renderExamSchedule() {
     html += `</div></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Exam Schedule Loaded");
+    updateStatus("Exam Schedule Loaded (Equal Duty Appled)");
 }
-
 // --- CLOUD SYNC ---
 window.syncFromCloud = async function() {
     updateStatus("Downloading Sheets...");
