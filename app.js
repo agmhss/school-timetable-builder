@@ -3,7 +3,7 @@
  * Features: LKG-12 Scale, Smart Spreading, Class Teacher Lock, Exam & Sub Equal Duty
  */
 
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbywDbC_e5uRJcYHthWEmwuxvb3c8n-QCozoN2xMQhCpIS8XHQeTpO1qpknENNRP0o4TzQ/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFzkBoIld8L0hGq9pv9VoFNr-4iwq8HsyGKkbCoj58Cy3YvfHh5VpP7uWZPJScgEOr/exec";
 
 // Global Trackers
 let generatedWeeklyTimetable = [];
