@@ -2,7 +2,7 @@
  * app.js - Auto-Generating Timetable for AGMHSS
  */
 
-const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyK4PLNHmAhp1C73fxTyr41sd-jEPXz1welPexofY2Ellx4YCmlMffCb4HkHPXwxlpxMg/exec";
+const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbywDbC_e5uRJcYHthWEmwuxvb3c8n-QCozoN2xMQhCpIS8XHQeTpO1qpknENNRP0o4TzQ/exec";
 
 // Global Variable to store the auto-generated weekly timetable
 let generatedWeeklyTimetable = [];
