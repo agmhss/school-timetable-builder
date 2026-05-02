@@ -1,6 +1,6 @@
 /**
  * app.js - Advanced Auto-Generating Timetable for AGMHSS
- * Scale: LKG to 12 (Sections A-J)
+ * Features: LKG to 12 Scale, Smart Spreading, Class Teacher (Period 1) Lock
  */
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbywDbC_e5uRJcYHthWEmwuxvb3c8n-QCozoN2xMQhCpIS8XHQeTpO1qpknENNRP0o4TzQ/exec";
@@ -26,7 +26,7 @@ document.addEventListener('DOMContentLoaded', () => {
             generatedWeeklyTimetable.forEach(slot => options.add(slot.className));
         } else if (e.target.value === 'teacher') {
             viewFilter.classList.remove('hidden');
-            generatedWeeklyTimetable.forEach(slot => options.add(slot.teacherName));
+            generatedWeeklyTimetable.forEach(slot => options.add(slot.teacherName.replace('⭐ ', '')));
         } else {
             viewFilter.classList.add('hidden');
         }
@@ -37,40 +37,79 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 });
 
-// --- CORE ALGORITHM: Smart Distribution ---
+// --- CORE ALGORITHM: Two-Phase Smart Distribution ---
 function generateAutoTimetable() {
     generatedWeeklyTimetable = []; 
     let teacherAvail = {};
     let classAvail = {};
-    let dailySubjectCount = {}; // To prevent putting the same subject 3 times a day
+    let dailySubjectCount = {}; 
 
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
 
-    SCHOOL_CONFIG.assignments.forEach(req => {
-        let placedCount = 0;
+    // முதல் கிளாஸ் பீரியட் எது என்பதைக் கண்டறிதல் (பொதுவாக Period 1)
+    const firstPeriod = SCHOOL_CONFIG.regularTimings.find(p => p.type === 'class');
 
-        // Distribute periods evenly across the 5 days
-        for (let i = 0; i < req.periodsPerWeek; i++) {
-            // This trick forces the system to check Mon, then Tue, then Wed, etc.
-            let dayIndex = i % 5; 
+    // ==========================================
+    // PHASE 1: CLASS TEACHER PERIOD 1 ALLOCATION
+    // ==========================================
+    SCHOOL_CONFIG.assignments.forEach(req => {
+        req.assignedCount = 0; // கவுண்டரைத் தொடங்குதல்
+
+        if (req.isClassTeacher && firstPeriod) {
+            for (let day of daysOfWeek) {
+                let timeKey = `${day}-${firstPeriod.label}`;
+
+                // ஆசிரியர் மற்றும் வகுப்பு இரண்டும் காலியாக உள்ளதா எனப் சரிபார்த்தல்
+                if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
+                    
+                    generatedWeeklyTimetable.push({
+                        day: day,
+                        period: firstPeriod.label,
+                        time: `${firstPeriod.start} - ${firstPeriod.end}`,
+                        className: req.className,
+                        subjectName: req.subjectName,
+                        teacherName: `⭐ ${req.teacherName}` // வகுப்பு ஆசிரியர் என்பதை குறிக்க நட்சத்திரம்
+                    });
+
+                    // Lock the slots
+                    if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
+                    teacherAvail[req.teacherName][timeKey] = true;
+
+                    if (!classAvail[req.className]) classAvail[req.className] = {};
+                    classAvail[req.className][timeKey] = true;
+
+                    if (!dailySubjectCount[req.className]) dailySubjectCount[req.className] = {};
+                    if (!dailySubjectCount[req.className][day]) dailySubjectCount[req.className][day] = {};
+                    dailySubjectCount[req.className][day][req.subjectName] = 1;
+
+                    req.assignedCount++;
+                }
+            }
+        }
+    });
+
+    // ==========================================
+    // PHASE 2: DISTRIBUTE REMAINING PERIODS
+    // ==========================================
+    SCHOOL_CONFIG.assignments.forEach(req => {
+        let remainingPeriods = req.periodsPerWeek - req.assignedCount;
+
+        for (let i = 0; i < remainingPeriods; i++) {
+            // பரவலாகப் பகிர்ந்தளிக்க Day Offset-ஐப் பயன்படுத்துதல்
+            let dayIndex = (i + req.assignedCount) % 5; 
             let startDay = daysOfWeek[dayIndex];
             
-            let placedInDay = false;
-
-            // Look for an empty slot on this specific day
             for (let period of SCHOOL_CONFIG.regularTimings) {
                 if (period.type === 'break' || period.type === 'fixed') continue; 
 
                 let timeKey = `${startDay}-${period.label}`;
 
-                // Check if teacher is free AND class is free
                 if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
                     
-                    // Limit same subject to Max 2 times per day for the same class
+                    // ஒரே பாடம் ஒரு நாளில் 2 முறைக்கு மேல் வரக்கூடாது
                     let countToday = dailySubjectCount[req.className]?.[startDay]?.[req.subjectName] || 0;
-                    if (countToday >= 2) continue; // Skip to next period if they already have this subject twice today
+                    if (countToday >= 2) continue; 
 
-                    // Assign the period
                     generatedWeeklyTimetable.push({
                         day: startDay,
                         period: period.label,
@@ -80,7 +119,7 @@ function generateAutoTimetable() {
                         teacherName: req.teacherName
                     });
 
-                    // Mark as busy
+                    // Lock the slots
                     if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
                     teacherAvail[req.teacherName][timeKey] = true;
 
@@ -91,25 +130,21 @@ function generateAutoTimetable() {
                     if (!dailySubjectCount[req.className][startDay]) dailySubjectCount[req.className][startDay] = {};
                     dailySubjectCount[req.className][startDay][req.subjectName] = countToday + 1;
 
-                    placedInDay = true;
-                    placedCount++;
-                    break; // Move to the next required period in the week
+                    req.assignedCount++;
+                    break; // Move to the next required period
                 }
             }
-            
-            // Note: If a day is completely full, the strict algorithm skips that period. 
-            // In a real massive school, complex fallback logic might be needed here later.
         }
     });
     
-    // Sort the final table so Monday shows first, Period 1 shows first, etc.
+    // Sort logically
     generatedWeeklyTimetable.sort((a, b) => {
         let dayDiff = daysOfWeek.indexOf(a.day) - daysOfWeek.indexOf(b.day);
         if (dayDiff !== 0) return dayDiff;
         return a.period.localeCompare(b.period, undefined, {numeric: true});
     });
 
-    console.log("Smart Auto-Generation Complete!");
+    console.log("Two-Phase Auto-Generation Complete!");
 }
 
 // --- RENDER ENGINE ---
@@ -134,15 +169,13 @@ window.renderTimetable = function() {
             </tr>
         </thead><tbody>`;
 
-    // Filter Data based on dropdowns
     let displayData = generatedWeeklyTimetable;
     if (viewType === 'class') {
         displayData = generatedWeeklyTimetable.filter(d => d.className === filterVal);
     } else if (viewType === 'teacher') {
-        displayData = generatedWeeklyTimetable.filter(d => d.teacherName === filterVal);
+        displayData = generatedWeeklyTimetable.filter(d => d.teacherName.replace('⭐ ', '') === filterVal);
     }
 
-    // Draw Rows with alternating row colors
     displayData.forEach((slot, index) => {
         let rowColor = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
         html += `<tr class="hover:bg-blue-50 transition-colors border-b ${rowColor}">
@@ -150,7 +183,7 @@ window.renderTimetable = function() {
             <td class="p-3 border text-blue-800 font-semibold">${slot.period} <br><span class="text-xs text-gray-400 font-normal">${slot.time}</span></td>
             <td class="p-3 border font-black text-gray-800">${slot.className}</td>
             <td class="p-3 border font-medium text-blue-600">${slot.subjectName}</td>
-            <td class="p-3 border text-gray-600">${slot.teacherName}</td>
+            <td class="p-3 border text-gray-800 font-bold">${slot.teacherName}</td>
         </tr>`;
     });
 
@@ -166,13 +199,13 @@ window.syncFromCloud = async function() {
         const response = await fetch(SCRIPT_URL);
         const cloudData = await response.json();
 
-        // Map the 5 columns from Google Sheets (A to E)
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             SCHOOL_CONFIG.assignments = cloudData.assignments.slice(1).map(row => ({
-                teacherName: String(row[0]).trim(),                     // Col A: Teacher
-                subjectName: String(row[1]).trim(),                     // Col B: Subject
-                className: String(row[2]).trim() + "-" + String(row[3]).trim(), // Col C & D: Class + Section combined
-                periodsPerWeek: parseInt(row[4]) || 5                   // Col E: Periods
+                teacherName: String(row[0]).trim(),                     
+                subjectName: String(row[1]).trim(),                     
+                className: String(row[2]).trim() + "-" + String(row[3]).trim(), 
+                periodsPerWeek: parseInt(row[4]) || 5,                  
+                isClassTeacher: String(row[5]).trim().toLowerCase() === 'yes' // Col F: Class Teacher Check
             }));
             
             updateStatus("Generating Schedule...");
