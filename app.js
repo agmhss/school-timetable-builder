@@ -148,6 +148,7 @@ function generateAutoTimetable() {
 }
 
 // --- RENDER ENGINE ---
+// --- RENDER ENGINE (Matrix Grid View) ---
 window.renderTimetable = function() {
     const mainGrid = document.getElementById('mainGrid');
     const viewType = document.getElementById('viewType').value;
@@ -158,17 +159,35 @@ window.renderTimetable = function() {
         return;
     }
 
-    let html = `<table id="scheduleTable" class="w-full text-left border-collapse min-w-[800px] text-sm">
-        <thead class="bg-blue-100 text-blue-900">
-            <tr>
-                <th class="p-3 border">Day</th>
-                <th class="p-3 border">Period</th>
-                <th class="p-3 border">Class & Sec</th>
-                <th class="p-3 border">Subject</th>
-                <th class="p-3 border">Teacher</th>
-            </tr>
-        </thead><tbody>`;
+    // Grid View-ல் "All" என்பதை ஒரே டேபிளில் காட்ட முடியாது. எனவே Class அல்லது Teacher-ஐ தேர்ந்தெடுக்கச் சொல்லலாம்.
+    if (viewType === 'all') {
+        mainGrid.innerHTML = `
+            <div class="flex flex-col items-center justify-center h-full text-gray-500 py-20">
+                <i data-lucide="grid" class="w-12 h-12 mb-2 opacity-30"></i>
+                <p class="text-lg">Please select <b>By Class</b> or <b>By Teacher</b> to view the Grid.</p>
+            </div>`;
+        if (window.lucide) window.lucide.createIcons();
+        return;
+    }
 
+    // Breaks-ஐத் தவிர்த்து, பாடம் நடக்கும் 8 Periods-ஐ மட்டும் நெடுவரிசைகளாக (Columns) எடுக்கிறோம்
+    const teachingPeriods = SCHOOL_CONFIG.regularTimings.filter(p => p.type === 'class');
+
+    let html = `<div class="overflow-x-auto">
+        <table id="scheduleTable" class="w-full text-center border-collapse min-w-[800px] bg-white text-sm">
+            <thead class="bg-blue-100 text-blue-900">
+                <tr>
+                    <th class="p-3 border border-blue-200 text-left w-24">Day</th>`;
+    
+    // Header Row: 1, 2, 3, 4 ... 8 என்று நம்பர்களை உருவாக்குதல்
+    teachingPeriods.forEach((p, index) => {
+        html += `<th class="p-3 border border-blue-200">
+                    <div class="font-bold text-lg">${index + 1}</div>
+                </th>`;
+    });
+    html += `</tr></thead><tbody>`;
+
+    // Dropdown-ல் தேர்ந்தெடுத்ததை வைத்து டேட்டாவை வடிகட்டுதல்
     let displayData = generatedWeeklyTimetable;
     if (viewType === 'class') {
         displayData = generatedWeeklyTimetable.filter(d => d.className === filterVal);
@@ -176,20 +195,39 @@ window.renderTimetable = function() {
         displayData = generatedWeeklyTimetable.filter(d => d.teacherName.replace('⭐ ', '') === filterVal);
     }
 
-    displayData.forEach((slot, index) => {
-        let rowColor = index % 2 === 0 ? 'bg-white' : 'bg-gray-50';
-        html += `<tr class="hover:bg-blue-50 transition-colors border-b ${rowColor}">
-            <td class="p-3 border font-bold text-gray-700">${slot.day}</td>
-            <td class="p-3 border text-blue-800 font-semibold">${slot.period} <br><span class="text-xs text-gray-400 font-normal">${slot.time}</span></td>
-            <td class="p-3 border font-black text-gray-800">${slot.className}</td>
-            <td class="p-3 border font-medium text-blue-600">${slot.subjectName}</td>
-            <td class="p-3 border text-gray-800 font-bold">${slot.teacherName}</td>
-        </tr>`;
+    // திங்கள் முதல் வெள்ளி வரை ஒவ்வொரு நாளாக உருவாக்குதல் (Rows)
+    daysOfWeek.forEach(day => {
+        html += `<tr>
+            <td class="p-3 border border-gray-200 font-bold text-gray-700 bg-gray-50 text-left">${day}</td>`;
+        
+        // அந்த நாளின் 8 பீரியட்களையும் நிரப்புதல்
+        teachingPeriods.forEach(period => {
+            // இந்த நாள் மற்றும் இந்த பீரியடில் வகுப்பு ஒதுக்கப்பட்டுள்ளதா எனத் தேடுதல்
+            let slot = displayData.find(d => d.day === day && d.period === period.label);
+            
+            if (slot) {
+                let cellText = "";
+                if (viewType === 'class') {
+                    // Class View: Subject & Teacher (உ.ம்: English-GTN)
+                    cellText = `<span class="font-semibold text-gray-800">${slot.subjectName}</span><br>
+                                <span class="text-xs text-blue-600 font-bold">${slot.teacherName.replace('⭐ ', '')}</span>`;
+                } else if (viewType === 'teacher') {
+                    // Teacher View: Class & Subject (உ.ம்: 10-A-English)
+                    cellText = `<span class="font-bold text-green-700">${slot.className}</span><br>
+                                <span class="text-xs text-gray-600">${slot.subjectName}</span>`;
+                }
+                html += `<td class="p-2 border border-gray-200 hover:bg-blue-50 transition-colors align-middle leading-tight">${cellText}</td>`;
+            } else {
+                // காலியான பீரியட்
+                html += `<td class="p-2 border border-gray-200 text-gray-300 bg-gray-50/30">-</td>`;
+            }
+        });
+        html += `</tr>`;
     });
 
-    html += `</tbody></table>`;
+    html += `</tbody></table></div>`;
     mainGrid.innerHTML = html;
-    updateStatus(`Showing ${viewType === 'all' ? 'All Classes' : filterVal} View`);
+    updateStatus(`Showing Grid for: ${filterVal}`);
 };
 
 // --- CLOUD SYNC ---
