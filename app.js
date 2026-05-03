@@ -1,6 +1,6 @@
 /**
  * app.js - Advanced Timetable, Exam & Substitution Engine
- * Features: Horizontal Data Entry (One row per teacher), Smart Spreading, Cloud Sync
+ * Features: Horizontal Data Entry, Smart Spreading, Cloud Sync, Strict Equal Duty Allotment
  */
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFzkBoIld8L0hGq9pv9VoFNr-4iwq8HsyGKkbCoj58Cy3YvfHh5VpP7uWZPJScgEOr/exec";
@@ -11,6 +11,7 @@ const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 let currentSession = 'FN'; 
 window.examDutyTracker = window.examDutyTracker || {};
 window.subDutyTracker = window.subDutyTracker || {};
+window.teacherWorkload = {}; // NEW: Regular class load tracker
 
 function updateStatus(msg) {
     const indicator = document.getElementById('statusIndicator');
@@ -86,7 +87,6 @@ function generateAutoTimetable() {
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
     const firstPeriod = SCHOOL_CONFIG.regularTimings.find(p => p.type === 'class');
 
-    // Phase 1: Lock Class Teachers
     SCHOOL_CONFIG.assignments.forEach(req => {
         req.assignedCount = 0; 
         if (req.isClassTeacher && firstPeriod) {
@@ -107,7 +107,6 @@ function generateAutoTimetable() {
         }
     });
 
-    // Phase 2: Distribute remaining periods
     SCHOOL_CONFIG.assignments.forEach(req => {
         let remainingPeriods = req.periodsPerWeek - req.assignedCount;
         for (let i = 0; i < remainingPeriods; i++) {
@@ -190,7 +189,7 @@ function renderRegularTimetable() {
     updateStatus(`Showing Grid for: ${filterVal}`);
 }
 
-// --- RENDER 2: EXAM SCHEDULE ---
+// --- RENDER 2: EXAM SCHEDULE (Fixed Equal Duty) ---
 function renderExamSchedule() {
     const pattern = document.getElementById('patternSelect').value;
     const activeGrades = SCHOOL_CONFIG.examPatterns[pattern][currentSession];
@@ -202,7 +201,7 @@ function renderExamSchedule() {
         SCHOOL_CONFIG.assignments.forEach(req => {
             let name = req.teacherName.replace('⭐ ', '');
             if (!teacherProfiles[name]) {
-                teacherProfiles[name] = { subjects: new Set(), duties: window.examDutyTracker[name] || 0 };
+                teacherProfiles[name] = { subjects: new Set() };
             }
             teacherProfiles[name].subjects.add(req.subjectName);
         });
@@ -216,28 +215,40 @@ function renderExamSchedule() {
 
     let html = `<div id="examContainer" class="space-y-6">
         <div class="p-4 bg-orange-50 border-l-4 border-orange-500 rounded-r-lg shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-2">
-            <div>
-                <h3 class="font-bold text-orange-900 text-lg">Session: ${currentSession === 'FN' ? 'Morning (FN)' : 'Afternoon (AN)'}</h3>
-                <p class="text-sm text-orange-800 font-medium">Reading Time: ${examData.coolOffStart} - ${examData.writingStart}</p>
-            </div>
-            <div class="text-sm bg-orange-200 text-orange-900 px-3 py-1 rounded font-bold">Writing Starts @ ${examData.writingStart}</div>
+            <div><h3 class="font-bold text-orange-900 text-lg">Session: ${currentSession === 'FN' ? 'Morning' : 'Afternoon'}</h3></div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">`;
+
+    // தற்காலிக நினைவகம் (ரெண்டர் செய்யும் போது மட்டும்)
+    let tempExamTracker = { ...window.examDutyTracker };
 
     activeGrades.forEach((grade, index) => {
         const isJunior = grade <= 8;
         const finishTime = isJunior ? examData.juniorEnd : examData.seniorEnd;
-        const durationText = isJunior ? '2.5 Hours' : '3.0 Hours';
-
-        let currentExamSubject = "English"; 
+        
+        let currentExamSubject = "English"; // Placeholder
         let eligibleTeachers = allTeachers.filter(t => !teacherProfiles[t].subjects.has(currentExamSubject));
         if (eligibleTeachers.length === 0) eligibleTeachers = allTeachers; 
         
-        eligibleTeachers.sort((a, b) => teacherProfiles[a].duties - teacherProfiles[b].duties);
-        let dutyTeacher = eligibleTeachers[0];
+        // --- STRICT EQUAL DUTY LOGIC ---
+        eligibleTeachers.sort((a, b) => {
+            let examA = tempExamTracker[a] || 0;
+            let examB = tempExamTracker[b] || 0;
+            
+            // 1. குறைவான Exam Duty பார்த்தவர் முதலில் வர வேண்டும்
+            if (examA !== examB) return examA - examB; 
+            
+            // 2. ஒருவேளை இருவரும் சமமாக இருந்தால், குறைவான Regular Class (Workload) உள்ளவர் வர வேண்டும்!
+            let loadA = window.teacherWorkload[a] || 0;
+            let loadB = window.teacherWorkload[b] || 0;
+            return loadA - loadB;
+        });
         
-        teacherProfiles[dutyTeacher].duties += 1;
-        window.examDutyTracker[dutyTeacher] = teacherProfiles[dutyTeacher].duties;
+        let dutyTeacher = eligibleTeachers[0];
+        // ஒருவருக்கு டியூட்டி கொடுத்த பின், அந்த செஷனுக்கு மட்டும் கணக்கில் ஏற்றுகிறோம் (பழைய Memory bug Fixed!)
+        tempExamTracker[dutyTeacher] = (tempExamTracker[dutyTeacher] || 0) + 1;
+
+        let teacherLoad = window.teacherWorkload[dutyTeacher] || 0;
 
         html += `
             <div class="p-5 border border-gray-200 rounded-xl bg-white shadow-sm hover:border-blue-400 hover:shadow-md transition-all relative overflow-hidden">
@@ -247,11 +258,18 @@ function renderExamSchedule() {
                     <span class="bg-gray-100 text-gray-700 text-xs px-2.5 py-1 rounded-md font-bold border border-gray-200">Hall ${index + 1}</span>
                 </div>
                 <div class="space-y-2 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <div class="flex justify-between text-sm"><span class="text-gray-500">Duration:</span><span class="font-bold text-gray-700">${durationText}</span></div>
+                    <div class="flex justify-between text-sm"><span class="text-gray-500">Duration:</span><span class="font-bold text-gray-700">${isJunior ? '2.5 Hours' : '3.0 Hours'}</span></div>
                     <div class="flex justify-between text-sm"><span class="text-gray-500">Ends at:</span><span class="font-bold ${isJunior ? 'text-green-600' : 'text-blue-600'}">${finishTime}</span></div>
                 </div>
                 <div class="pt-3 border-t border-gray-100 flex items-center justify-between">
-                    <div class="flex flex-col"><span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Invigilator Duty</span><span class="text-base font-bold text-blue-700 flex items-center gap-1"><i data-lucide="user-check" class="w-4 h-4"></i> ${dutyTeacher}</span></div>
+                    <div class="flex flex-col">
+                        <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Invigilator Duty</span>
+                        <span class="text-base font-bold text-blue-700 flex items-center gap-1"><i data-lucide="user-check" class="w-4 h-4"></i> ${dutyTeacher}</span>
+                    </div>
+                    <div class="text-right flex flex-col">
+                        <span class="text-[10px] font-bold text-gray-400 uppercase">Regular Load</span>
+                        <span class="text-sm font-black text-gray-600">${teacherLoad} Per.</span>
+                    </div>
                 </div>
             </div>`;
     });
@@ -259,10 +277,10 @@ function renderExamSchedule() {
     html += `</div></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Exam Schedule Loaded");
+    updateStatus("Exam Schedule Loaded (Strict Equal Duty Applied)");
 }
 
-// --- RENDER 3: SUBSTITUTION MANAGER ---
+// --- RENDER 3: SUBSTITUTION MANAGER (Fixed Equal Duty) ---
 function renderSubstituteSchedule() {
     const mainGrid = document.getElementById('mainGrid');
     const day = document.getElementById('subDay').value;
@@ -300,10 +318,11 @@ function renderSubstituteSchedule() {
                 <div class="overflow-x-auto">
         <table class="w-full text-left border-collapse bg-white shadow-sm border border-gray-200">
             <thead class="bg-red-50 text-red-900 border-b border-red-200">
-                <tr><th class="p-3 border-r">Period</th><th class="p-3 border-r">Class</th><th class="p-3 border-r">Absent Teacher</th><th class="p-3">Assign Substitute</th></tr>
+                <tr><th class="p-3 border-r">Period</th><th class="p-3 border-r">Class</th><th class="p-3 border-r">Absent Teacher</th><th class="p-3">Assign Substitute (Sorted by Least Load)</th></tr>
             </thead>
             <tbody>`;
 
+    // தற்காலிக நினைவகம் (ரெண்டர் செய்யும் போது மட்டும்)
     let tempDutyTracker = { ...window.subDutyTracker };
 
     vacantSlots.forEach(slot => {
@@ -312,18 +331,33 @@ function renderSubstituteSchedule() {
             .map(s => s.teacherName.replace('⭐ ', ''));
 
         let freeTeachers = presentTeachers.filter(t => !busyThisPeriod.includes(t));
-        freeTeachers.sort((a, b) => (tempDutyTracker[a] || 0) - (tempDutyTracker[b] || 0));
+        
+        // --- STRICT EQUAL DUTY LOGIC ---
+        freeTeachers.sort((a, b) => {
+            let subA = tempDutyTracker[a] || 0;
+            let subB = tempDutyTracker[b] || 0;
+            
+            // 1. குறைவான Sub டியூட்டி பார்த்தவர் முதலில் வர வேண்டும்
+            if (subA !== subB) return subA - subB;
+            
+            // 2. இருவரும் சமமாக இருந்தால், குறைவான Regular Class உள்ளவர் வர வேண்டும்!
+            let loadA = window.teacherWorkload[a] || 0;
+            let loadB = window.teacherWorkload[b] || 0;
+            return loadA - loadB; 
+        });
 
         let suggestedTeacher = freeTeachers.length > 0 ? freeTeachers[0] : null;
         if (suggestedTeacher) {
+            // ஒருவருக்கு டியூட்டி கொடுத்த பின், அந்த செஷனுக்கு மட்டும் கணக்கில் ஏற்றுகிறோம் (பழைய Memory bug Fixed!)
             tempDutyTracker[suggestedTeacher] = (tempDutyTracker[suggestedTeacher] || 0) + 1;
-            window.subDutyTracker[suggestedTeacher] = tempDutyTracker[suggestedTeacher]; 
         }
 
         let optionsHtml = freeTeachers.map(t => {
             let dutyCount = window.subDutyTracker[t] || 0;
+            let regLoad = window.teacherWorkload[t] || 0;
             let isSelected = (t === suggestedTeacher) ? 'selected' : '';
-            return `<option value="${t}" ${isSelected}>${t} (Duties: ${dutyCount})</option>`;
+            // ஆசிரியரின் பெயருக்குப் பக்கத்தில் Sub டியூட்டி எண்ணிக்கை மற்றும் Regular Workload காட்டப்படும்
+            return `<option value="${t}" ${isSelected}>${t} (Sub: ${dutyCount} | Load: ${regLoad})</option>`;
         }).join('');
 
         let noFreeTeacherMsg = freeTeachers.length === 0 ? `<option value="">⚠️ No Free Teachers Available!</option>` : '';
@@ -343,10 +377,10 @@ function renderSubstituteSchedule() {
     html += `</tbody></table></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Substitution Manager Loaded");
+    updateStatus("Substitution Manager Loaded (Strict Equal Duty Applied)");
 }
 
-// --- CLOUD SYNC & NEW HORIZONTAL PARSING ALGORITHM ---
+// --- CLOUD SYNC & NEW HORIZONTAL PARSING ---
 function populateAbsentTeachersList() {
     let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))].sort();
     const listDiv = document.getElementById('absentTeachersList');
@@ -374,8 +408,10 @@ window.syncFromCloud = async function() {
             });
         }
 
-        // 2. Parse Horizontal Assignments (The New Logic!)
+        // 2. Parse Horizontal Assignments & Calculate Workload
         SCHOOL_CONFIG.assignments = [];
+        window.teacherWorkload = {}; // Reset workload
+
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             cloudData.assignments.slice(1).forEach(row => {
                 let teacherName = String(row[0] || '').trim();
@@ -383,14 +419,12 @@ window.syncFromCloud = async function() {
 
                 if (!teacherName) return; 
 
-                // Loop through columns in steps of 4 starting from Col C (index 2)
                 for (let i = 2; i < row.length; i += 4) {
                     let cls = String(row[i] || '').trim();
                     let sec = String(row[i+1] || '').trim();
                     let periods = parseInt(row[i+2]);
                     let isCT = String(row[i+3] || '').trim().toLowerCase() === 'yes';
 
-                    // If class exists and periods are assigned, push it to our standard format
                     if (cls && !isNaN(periods) && periods > 0) {
                         SCHOOL_CONFIG.assignments.push({
                             teacherName: teacherName,
@@ -399,6 +433,9 @@ window.syncFromCloud = async function() {
                             periodsPerWeek: periods,
                             isClassTeacher: isCT
                         });
+                        
+                        // Calculate total workload for the teacher
+                        window.teacherWorkload[teacherName] = (window.teacherWorkload[teacherName] || 0) + periods;
                     }
                 }
             });
