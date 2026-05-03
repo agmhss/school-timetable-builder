@@ -1,6 +1,6 @@
 /**
  * app.js - Advanced Timetable, Exam & Substitution Engine
- * Features: Horizontal Data Entry, Smart Spreading, Cloud Sync, Strict Equal Duty Allotment
+ * Features: Date Support, Absentee Skippers for Exam & Sub, Equal Duty Allotment
  */
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFzkBoIld8L0hGq9pv9VoFNr-4iwq8HsyGKkbCoj58Cy3YvfHh5VpP7uWZPJScgEOr/exec";
@@ -11,7 +11,7 @@ const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday'];
 let currentSession = 'FN'; 
 window.examDutyTracker = window.examDutyTracker || {};
 window.subDutyTracker = window.subDutyTracker || {};
-window.teacherWorkload = {}; // NEW: Regular class load tracker
+window.teacherWorkload = {}; 
 
 function updateStatus(msg) {
     const indicator = document.getElementById('statusIndicator');
@@ -25,14 +25,26 @@ document.addEventListener('DOMContentLoaded', () => {
     const opMode = document.getElementById('opMode');
     const examGroup = document.getElementById('examPatternGroup');
     const subGroup = document.getElementById('substituteGroup');
+    const dailyTools = document.getElementById('dailyToolsGroup'); // New Date & Absentees section
+
+    // Set today's date as default
+    const dateInput = document.getElementById('workDate');
+    if(dateInput) dateInput.valueAsDate = new Date();
 
     if(opMode) {
         opMode.addEventListener('change', (e) => {
             if(examGroup) examGroup.classList.add('hidden');
             if(subGroup) subGroup.classList.add('hidden');
+            if(dailyTools) dailyTools.classList.add('hidden');
             
-            if (e.target.value === 'exam' && examGroup) examGroup.classList.remove('hidden');
-            if (e.target.value === 'substitution' && subGroup) subGroup.classList.remove('hidden');
+            if (e.target.value === 'exam') {
+                if(examGroup) examGroup.classList.remove('hidden');
+                if(dailyTools) dailyTools.classList.remove('hidden'); // Show for Exam
+            }
+            if (e.target.value === 'substitution') {
+                if(subGroup) subGroup.classList.remove('hidden');
+                if(dailyTools) dailyTools.classList.remove('hidden'); // Show for Sub
+            }
         });
     }
 
@@ -68,6 +80,15 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     });
 });
+
+// --- HELPER: GET FORMATTED DATE ---
+function getSelectedDateStr() {
+    const dateVal = document.getElementById('workDate')?.value;
+    if (!dateVal) return "N/A";
+    const d = new Date(dateVal);
+    // Format: DD-MM-YYYY
+    return `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()}`;
+}
 
 // --- ROUTING ENGINE ---
 window.generateGrid = function() {
@@ -189,12 +210,17 @@ function renderRegularTimetable() {
     updateStatus(`Showing Grid for: ${filterVal}`);
 }
 
-// --- RENDER 2: EXAM SCHEDULE (Fixed Equal Duty) ---
+// --- RENDER 2: EXAM SCHEDULE (With Absentees & Date) ---
 function renderExamSchedule() {
     const pattern = document.getElementById('patternSelect').value;
     const activeGrades = SCHOOL_CONFIG.examPatterns[pattern][currentSession];
     const examData = SCHOOL_CONFIG.examSettings[currentSession];
     const mainGrid = document.getElementById('mainGrid');
+    const selectedDate = getSelectedDateStr();
+
+    // 1. Get Absentees
+    const absentCheckboxes = document.querySelectorAll('.absent-chk:checked');
+    const absentTeachers = Array.from(absentCheckboxes).map(cb => cb.value);
 
     let teacherProfiles = {};
     if (SCHOOL_CONFIG.assignments && SCHOOL_CONFIG.assignments.length > 0) {
@@ -213,13 +239,24 @@ function renderExamSchedule() {
         return;
     }
 
+    // 2. Filter out Absent Teachers from the Exam Duty Pool
+    let presentTeachers = allTeachers.filter(t => !absentTeachers.includes(t));
+
+    if (presentTeachers.length === 0) {
+        mainGrid.innerHTML = `<div class="text-red-500 font-bold p-4">All teachers are marked absent! Cannot generate duty.</div>`;
+        return;
+    }
+
     let html = `<div id="examContainer" class="space-y-6">
         <div class="p-4 bg-orange-50 border-l-4 border-orange-500 rounded-r-lg shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-2">
-            <div><h3 class="font-bold text-orange-900 text-lg">Session: ${currentSession === 'FN' ? 'Morning' : 'Afternoon'}</h3></div>
+            <div>
+                <h3 class="font-bold text-orange-900 text-lg">Session: ${currentSession === 'FN' ? 'Morning (FN)' : 'Afternoon (AN)'}</h3>
+                <p class="text-sm text-orange-800 font-medium mt-1"><i data-lucide="calendar" class="w-4 h-4 inline-block mr-1 relative -top-0.5"></i>Date: ${selectedDate}</p>
+            </div>
+            <div class="text-sm bg-orange-200 text-orange-900 px-3 py-1 rounded font-bold">Writing Starts @ ${examData.writingStart}</div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">`;
 
-    // தற்காலிக நினைவகம் (ரெண்டர் செய்யும் போது மட்டும்)
     let tempExamTracker = { ...window.examDutyTracker };
 
     activeGrades.forEach((grade, index) => {
@@ -227,25 +264,20 @@ function renderExamSchedule() {
         const finishTime = isJunior ? examData.juniorEnd : examData.seniorEnd;
         
         let currentExamSubject = "English"; // Placeholder
-        let eligibleTeachers = allTeachers.filter(t => !teacherProfiles[t].subjects.has(currentExamSubject));
-        if (eligibleTeachers.length === 0) eligibleTeachers = allTeachers; 
+        let eligibleTeachers = presentTeachers.filter(t => !teacherProfiles[t].subjects.has(currentExamSubject));
+        if (eligibleTeachers.length === 0) eligibleTeachers = presentTeachers; // Fallback
         
-        // --- STRICT EQUAL DUTY LOGIC ---
         eligibleTeachers.sort((a, b) => {
             let examA = tempExamTracker[a] || 0;
             let examB = tempExamTracker[b] || 0;
-            
-            // 1. குறைவான Exam Duty பார்த்தவர் முதலில் வர வேண்டும்
             if (examA !== examB) return examA - examB; 
             
-            // 2. ஒருவேளை இருவரும் சமமாக இருந்தால், குறைவான Regular Class (Workload) உள்ளவர் வர வேண்டும்!
             let loadA = window.teacherWorkload[a] || 0;
             let loadB = window.teacherWorkload[b] || 0;
             return loadA - loadB;
         });
         
         let dutyTeacher = eligibleTeachers[0];
-        // ஒருவருக்கு டியூட்டி கொடுத்த பின், அந்த செஷனுக்கு மட்டும் கணக்கில் ஏற்றுகிறோம் (பழைய Memory bug Fixed!)
         tempExamTracker[dutyTeacher] = (tempExamTracker[dutyTeacher] || 0) + 1;
 
         let teacherLoad = window.teacherWorkload[dutyTeacher] || 0;
@@ -277,13 +309,14 @@ function renderExamSchedule() {
     html += `</div></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Exam Schedule Loaded (Strict Equal Duty Applied)");
+    updateStatus("Exam Schedule Loaded (Absentees Skipped)");
 }
 
-// --- RENDER 3: SUBSTITUTION MANAGER (Fixed Equal Duty) ---
+// --- RENDER 3: SUBSTITUTION MANAGER (With Date) ---
 function renderSubstituteSchedule() {
     const mainGrid = document.getElementById('mainGrid');
     const day = document.getElementById('subDay').value;
+    const selectedDate = getSelectedDateStr();
     
     const absentCheckboxes = document.querySelectorAll('.absent-chk:checked');
     const absentTeachers = Array.from(absentCheckboxes).map(cb => cb.value);
@@ -308,11 +341,14 @@ function renderSubstituteSchedule() {
     let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))];
     let presentTeachers = allTeachers.filter(t => !absentTeachers.includes(t));
 
-    let html = `<div class="mb-4 flex justify-between items-end">
-                    <h3 class="font-bold text-xl text-red-700">Substitution Required for ${day}</h3>
+    let html = `<div class="mb-4 flex flex-col md:flex-row justify-between items-start md:items-end gap-4 border-b pb-4">
+                    <div>
+                        <h3 class="font-black text-2xl text-red-700 uppercase tracking-tight">Substitution Register</h3>
+                        <p class="text-gray-600 font-bold mt-1"><i data-lucide="calendar" class="w-4 h-4 inline-block mr-1"></i>${selectedDate} <span class="text-gray-400">(${day})</span></p>
+                    </div>
                     <div class="flex gap-2">
-                        <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 text-sm rounded shadow font-bold transition-colors">Print Sub Sheet</button>
-                        <button onclick="saveDutiesToCloud()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-1.5 text-sm rounded shadow font-bold transition-colors">Save Counts to Sheet</button>
+                        <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm rounded shadow font-bold transition-colors flex items-center gap-2"><i data-lucide="printer" class="w-4 h-4"></i> Print Sheet</button>
+                        <button onclick="saveDutiesToCloud()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-sm rounded shadow font-bold transition-colors flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Duty Counts</button>
                     </div>
                 </div>
                 <div class="overflow-x-auto">
@@ -322,7 +358,6 @@ function renderSubstituteSchedule() {
             </thead>
             <tbody>`;
 
-    // தற்காலிக நினைவகம் (ரெண்டர் செய்யும் போது மட்டும்)
     let tempDutyTracker = { ...window.subDutyTracker };
 
     vacantSlots.forEach(slot => {
@@ -332,15 +367,11 @@ function renderSubstituteSchedule() {
 
         let freeTeachers = presentTeachers.filter(t => !busyThisPeriod.includes(t));
         
-        // --- STRICT EQUAL DUTY LOGIC ---
         freeTeachers.sort((a, b) => {
             let subA = tempDutyTracker[a] || 0;
             let subB = tempDutyTracker[b] || 0;
-            
-            // 1. குறைவான Sub டியூட்டி பார்த்தவர் முதலில் வர வேண்டும்
             if (subA !== subB) return subA - subB;
             
-            // 2. இருவரும் சமமாக இருந்தால், குறைவான Regular Class உள்ளவர் வர வேண்டும்!
             let loadA = window.teacherWorkload[a] || 0;
             let loadB = window.teacherWorkload[b] || 0;
             return loadA - loadB; 
@@ -348,7 +379,6 @@ function renderSubstituteSchedule() {
 
         let suggestedTeacher = freeTeachers.length > 0 ? freeTeachers[0] : null;
         if (suggestedTeacher) {
-            // ஒருவருக்கு டியூட்டி கொடுத்த பின், அந்த செஷனுக்கு மட்டும் கணக்கில் ஏற்றுகிறோம் (பழைய Memory bug Fixed!)
             tempDutyTracker[suggestedTeacher] = (tempDutyTracker[suggestedTeacher] || 0) + 1;
         }
 
@@ -356,7 +386,6 @@ function renderSubstituteSchedule() {
             let dutyCount = window.subDutyTracker[t] || 0;
             let regLoad = window.teacherWorkload[t] || 0;
             let isSelected = (t === suggestedTeacher) ? 'selected' : '';
-            // ஆசிரியரின் பெயருக்குப் பக்கத்தில் Sub டியூட்டி எண்ணிக்கை மற்றும் Regular Workload காட்டப்படும்
             return `<option value="${t}" ${isSelected}>${t} (Sub: ${dutyCount} | Load: ${regLoad})</option>`;
         }).join('');
 
@@ -377,18 +406,18 @@ function renderSubstituteSchedule() {
     html += `</tbody></table></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Substitution Manager Loaded (Strict Equal Duty Applied)");
+    updateStatus("Substitution Manager Loaded");
 }
 
-// --- CLOUD SYNC & NEW HORIZONTAL PARSING ---
+// --- CLOUD SYNC & HORIZONTAL PARSING ---
 function populateAbsentTeachersList() {
     let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))].sort();
     const listDiv = document.getElementById('absentTeachersList');
     if(!listDiv) return;
     
     listDiv.innerHTML = allTeachers.map(t => 
-        `<label class="flex items-center gap-1 bg-white border px-2 py-1 rounded cursor-pointer hover:bg-red-50">
-            <input type="checkbox" class="absent-chk" value="${t}"> ${t}
+        `<label class="flex items-center gap-1 bg-white border border-gray-200 px-2 py-1 rounded cursor-pointer hover:bg-red-50 hover:border-red-300 transition-colors">
+            <input type="checkbox" class="absent-chk" value="${t}"> <span class="font-medium text-gray-700">${t}</span>
         </label>`
     ).join('');
 }
@@ -399,7 +428,6 @@ window.syncFromCloud = async function() {
         const response = await fetch(SCRIPT_URL);
         const cloudData = await response.json();
 
-        // 1. Load Duty Tracker
         window.subDutyTracker = {};
         if (cloudData.tracker && cloudData.tracker.length > 1) {
             cloudData.tracker.slice(1).forEach(row => {
@@ -408,9 +436,8 @@ window.syncFromCloud = async function() {
             });
         }
 
-        // 2. Parse Horizontal Assignments & Calculate Workload
         SCHOOL_CONFIG.assignments = [];
-        window.teacherWorkload = {}; // Reset workload
+        window.teacherWorkload = {}; 
 
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             cloudData.assignments.slice(1).forEach(row => {
@@ -434,7 +461,6 @@ window.syncFromCloud = async function() {
                             isClassTeacher: isCT
                         });
                         
-                        // Calculate total workload for the teacher
                         window.teacherWorkload[teacherName] = (window.teacherWorkload[teacherName] || 0) + periods;
                     }
                 }
@@ -454,7 +480,6 @@ window.syncFromCloud = async function() {
     }
 };
 
-// --- SAVE DUTY COUNTS TO CLOUD ---
 window.saveDutiesToCloud = async function() {
     updateStatus("Saving Duty Counts to Google Sheet...");
     const selects = document.querySelectorAll('select.w-full'); 
@@ -488,13 +513,15 @@ window.exportPDF = function() {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
     const mode = document.getElementById('opMode').value;
+    const selectedDate = getSelectedDateStr();
     
     if (mode === 'exam') {
         doc.text("AGMHSS Exam Invigilation Schedule", 14, 15);
-        doc.text(`Session: ${currentSession}`, 14, 25);
+        doc.text(`Date: ${selectedDate} | Session: ${currentSession}`, 14, 25);
         doc.text("Please use screenshot for Exam Duty Cards.", 14, 35);
     } else if (mode === 'substitution') {
-        doc.text("AGMHSS Substitution Duty", 14, 15);
+        const day = document.getElementById('subDay').value;
+        doc.text(`AGMHSS Substitution Duty - ${selectedDate} (${day})`, 14, 15);
         doc.text("Please use the 'Print Sub Sheet' button on the screen.", 14, 25);
     } else {
         const filterType = document.getElementById('viewType').value;
@@ -506,5 +533,5 @@ window.exportPDF = function() {
         doc.text(title, 14, 15);
         doc.autoTable({ html: '#scheduleTable', startY: 20, theme: 'grid', styles: { fontSize: 8 } });
     }
-    doc.save("AGMHSS_Schedule.pdf");
+    doc.save(`AGMHSS_Schedule_${selectedDate}.pdf`);
 };
