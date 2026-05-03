@@ -1,6 +1,6 @@
 /**
  * app.js - Advanced Timetable, Exam & Substitution Engine
- * Features: Date Support, Absentee Skippers for Exam & Sub, Equal Duty Allotment
+ * Features: Fallback Day Search, Date Support, Absentee Skippers, Equal Duty Allotment, Horizontal Data
  */
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFzkBoIld8L0hGq9pv9VoFNr-4iwq8HsyGKkbCoj58Cy3YvfHh5VpP7uWZPJScgEOr/exec";
@@ -98,7 +98,7 @@ window.generateGrid = function() {
     else if (mode === 'substitution') renderSubstituteSchedule();
 };
 
-// --- CORE TIMETABLE GENERATOR ---
+// --- CORE TIMETABLE GENERATOR (WITH FALLBACK LOOP) ---
 function generateAutoTimetable() {
     generatedWeeklyTimetable = []; 
     let teacherAvail = {};
@@ -108,6 +108,7 @@ function generateAutoTimetable() {
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
     const firstPeriod = SCHOOL_CONFIG.regularTimings.find(p => p.type === 'class');
 
+    // Phase 1: Class Teachers Locked to Period 1
     SCHOOL_CONFIG.assignments.forEach(req => {
         req.assignedCount = 0; 
         if (req.isClassTeacher && firstPeriod) {
@@ -128,33 +129,51 @@ function generateAutoTimetable() {
         }
     });
 
+    // Phase 2: Distribute Remaining Periods (Fallback logic added here)
     SCHOOL_CONFIG.assignments.forEach(req => {
         let remainingPeriods = req.periodsPerWeek - req.assignedCount;
         for (let i = 0; i < remainingPeriods; i++) {
-            let dayIndex = (i + req.assignedCount) % 5; 
-            let startDay = daysOfWeek[dayIndex];
-            for (let period of SCHOOL_CONFIG.regularTimings) {
-                if (period.type === 'break' || period.type === 'fixed') continue; 
-                let timeKey = `${startDay}-${period.label}`;
-                if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
-                    let countToday = dailySubjectCount[req.className]?.[startDay]?.[req.subjectName] || 0;
-                    if (countToday >= 2) continue; 
+            let placed = false;
+            let preferredDayIndex = (i + req.assignedCount) % 5; 
+            
+            // ஒரு நாளில் இடம் இல்லையென்றால் அடுத்தடுத்த நாட்களில் தேட புதிய சுழற்சி (Fallback Loop)
+            for (let d = 0; d < 5; d++) {
+                let checkDayIndex = (preferredDayIndex + d) % 5;
+                let checkDay = daysOfWeek[checkDayIndex];
+                
+                for (let period of SCHOOL_CONFIG.regularTimings) {
+                    if (period.type === 'break' || period.type === 'fixed') continue; 
                     
-                    generatedWeeklyTimetable.push({
-                        day: startDay, period: period.label, time: `${period.start} - ${period.end}`,
-                        className: req.className, subjectName: req.subjectName, teacherName: req.teacherName
-                    });
+                    let timeKey = `${checkDay}-${period.label}`;
                     
-                    if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
-                    teacherAvail[req.teacherName][timeKey] = true;
-                    if (!classAvail[req.className]) classAvail[req.className] = {};
-                    classAvail[req.className][timeKey] = true;
-                    if (!dailySubjectCount[req.className]) dailySubjectCount[req.className] = {};
-                    if (!dailySubjectCount[req.className][startDay]) dailySubjectCount[req.className][startDay] = {};
-                    dailySubjectCount[req.className][startDay][req.subjectName] = countToday + 1;
-                    req.assignedCount++;
-                    break; 
+                    if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
+                        let countToday = dailySubjectCount[req.className]?.[checkDay]?.[req.subjectName] || 0;
+                        if (countToday >= 2) continue; // Max 2 periods of the same subject per day
+                        
+                        generatedWeeklyTimetable.push({
+                            day: checkDay, period: period.label, time: `${period.start} - ${period.end}`,
+                            className: req.className, subjectName: req.subjectName, teacherName: req.teacherName
+                        });
+                        
+                        if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
+                        teacherAvail[req.teacherName][timeKey] = true;
+                        if (!classAvail[req.className]) classAvail[req.className] = {};
+                        classAvail[req.className][timeKey] = true;
+                        
+                        if (!dailySubjectCount[req.className]) dailySubjectCount[req.className] = {};
+                        if (!dailySubjectCount[req.className][checkDay]) dailySubjectCount[req.className][checkDay] = {};
+                        dailySubjectCount[req.className][checkDay][req.subjectName] = countToday + 1;
+                        
+                        req.assignedCount++;
+                        placed = true;
+                        break; // அந்த பீரியட் ஒதுக்கப்பட்டவுடன் Period லூப்பை நிறுத்த வேண்டும்
+                    }
                 }
+                if (placed) break; // இடம் கிடைத்துவிட்டால் Day லூப்பையும் நிறுத்த வேண்டும்
+            }
+            
+            if (!placed) {
+                console.warn(`Warning: Could not find a free slot for ${req.subjectName} in ${req.className}. Timetable is too packed!`);
             }
         }
     });
@@ -210,7 +229,7 @@ function renderRegularTimetable() {
     updateStatus(`Showing Grid for: ${filterVal}`);
 }
 
-// --- RENDER 2: EXAM SCHEDULE (With Absentees & Date) ---
+// --- RENDER 2: EXAM SCHEDULE ---
 function renderExamSchedule() {
     const pattern = document.getElementById('patternSelect').value;
     const activeGrades = SCHOOL_CONFIG.examPatterns[pattern][currentSession];
@@ -218,7 +237,6 @@ function renderExamSchedule() {
     const mainGrid = document.getElementById('mainGrid');
     const selectedDate = getSelectedDateStr();
 
-    // 1. Get Absentees
     const absentCheckboxes = document.querySelectorAll('.absent-chk:checked');
     const absentTeachers = Array.from(absentCheckboxes).map(cb => cb.value);
 
@@ -239,7 +257,6 @@ function renderExamSchedule() {
         return;
     }
 
-    // 2. Filter out Absent Teachers from the Exam Duty Pool
     let presentTeachers = allTeachers.filter(t => !absentTeachers.includes(t));
 
     if (presentTeachers.length === 0) {
@@ -265,7 +282,7 @@ function renderExamSchedule() {
         
         let currentExamSubject = "English"; // Placeholder
         let eligibleTeachers = presentTeachers.filter(t => !teacherProfiles[t].subjects.has(currentExamSubject));
-        if (eligibleTeachers.length === 0) eligibleTeachers = presentTeachers; // Fallback
+        if (eligibleTeachers.length === 0) eligibleTeachers = presentTeachers; 
         
         eligibleTeachers.sort((a, b) => {
             let examA = tempExamTracker[a] || 0;
@@ -309,10 +326,10 @@ function renderExamSchedule() {
     html += `</div></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Exam Schedule Loaded (Absentees Skipped)");
+    updateStatus("Exam Schedule Loaded");
 }
 
-// --- RENDER 3: SUBSTITUTION MANAGER (With Date) ---
+// --- RENDER 3: SUBSTITUTION MANAGER ---
 function renderSubstituteSchedule() {
     const mainGrid = document.getElementById('mainGrid');
     const day = document.getElementById('subDay').value;
@@ -535,3 +552,5 @@ window.exportPDF = function() {
     }
     doc.save(`AGMHSS_Schedule_${selectedDate}.pdf`);
 };
+
+
