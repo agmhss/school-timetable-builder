@@ -1,6 +1,6 @@
 /**
  * app.js - Advanced Timetable, Exam & Substitution Engine
- * Features: Fallback Day Search, Date Support, Absentee Skippers, Equal Duty Allotment, Horizontal Data
+ * Features: Level Segregation (Primary/High/HrSec), Fallback Search, Equal Duty Allotment
  */
 
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbzFzkBoIld8L0hGq9pv9VoFNr-4iwq8HsyGKkbCoj58Cy3YvfHh5VpP7uWZPJScgEOr/exec";
@@ -12,10 +12,27 @@ let currentSession = 'FN';
 window.examDutyTracker = window.examDutyTracker || {};
 window.subDutyTracker = window.subDutyTracker || {};
 window.teacherWorkload = {}; 
+window.teacherLevels = {}; // NEW: Track Primary / High / HrSec
+window.teacherMaxGrade = {};
 
 function updateStatus(msg) {
     const indicator = document.getElementById('statusIndicator');
     if (indicator) indicator.innerText = msg;
+}
+
+// --- NEW HELPERS: LEVEL CLASSIFICATION ---
+function getGradeValue(clsStr) {
+    let match = String(clsStr).toUpperCase().match(/^(\d+|LKG|UKG)/);
+    if (!match) return -1;
+    if (match[1] === 'LKG' || match[1] === 'UKG') return 0;
+    return parseInt(match[1]);
+}
+
+function getTeacherCategory(gradeVal) {
+    if (gradeVal === -1) return 'Unknown';
+    if (gradeVal <= 5) return 'Primary';
+    if (gradeVal <= 10) return 'High School';
+    return 'Hr. Secondary';
 }
 
 // --- UI EVENT LISTENERS ---
@@ -25,9 +42,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const opMode = document.getElementById('opMode');
     const examGroup = document.getElementById('examPatternGroup');
     const subGroup = document.getElementById('substituteGroup');
-    const dailyTools = document.getElementById('dailyToolsGroup'); // New Date & Absentees section
+    const dailyTools = document.getElementById('dailyToolsGroup');
 
-    // Set today's date as default
     const dateInput = document.getElementById('workDate');
     if(dateInput) dateInput.valueAsDate = new Date();
 
@@ -39,11 +55,11 @@ document.addEventListener('DOMContentLoaded', () => {
             
             if (e.target.value === 'exam') {
                 if(examGroup) examGroup.classList.remove('hidden');
-                if(dailyTools) dailyTools.classList.remove('hidden'); // Show for Exam
+                if(dailyTools) dailyTools.classList.remove('hidden'); 
             }
             if (e.target.value === 'substitution') {
                 if(subGroup) subGroup.classList.remove('hidden');
-                if(dailyTools) dailyTools.classList.remove('hidden'); // Show for Sub
+                if(dailyTools) dailyTools.classList.remove('hidden'); 
             }
         });
     }
@@ -75,22 +91,18 @@ document.addEventListener('DOMContentLoaded', () => {
             e.target.classList.remove('text-gray-500', 'hover:bg-gray-200');
             e.target.classList.add('bg-white', 'shadow-sm', 'text-blue-700', 'font-bold');
             currentSession = e.target.id.replace('btn', '');
-            
             if (document.getElementById('opMode').value === 'exam') window.generateGrid();
         });
     });
 });
 
-// --- HELPER: GET FORMATTED DATE ---
 function getSelectedDateStr() {
     const dateVal = document.getElementById('workDate')?.value;
     if (!dateVal) return "N/A";
     const d = new Date(dateVal);
-    // Format: DD-MM-YYYY
     return `${d.getDate().toString().padStart(2, '0')}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getFullYear()}`;
 }
 
-// --- ROUTING ENGINE ---
 window.generateGrid = function() {
     const mode = document.getElementById('opMode').value;
     if (mode === 'regular') renderRegularTimetable();
@@ -98,7 +110,7 @@ window.generateGrid = function() {
     else if (mode === 'substitution') renderSubstituteSchedule();
 };
 
-// --- CORE TIMETABLE GENERATOR (WITH FALLBACK LOOP) ---
+// --- CORE TIMETABLE GENERATOR ---
 function generateAutoTimetable() {
     generatedWeeklyTimetable = []; 
     let teacherAvail = {};
@@ -108,7 +120,6 @@ function generateAutoTimetable() {
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
     const firstPeriod = SCHOOL_CONFIG.regularTimings.find(p => p.type === 'class');
 
-    // Phase 1: Class Teachers Locked to Period 1
     SCHOOL_CONFIG.assignments.forEach(req => {
         req.assignedCount = 0; 
         if (req.isClassTeacher && firstPeriod) {
@@ -129,26 +140,23 @@ function generateAutoTimetable() {
         }
     });
 
-    // Phase 2: Distribute Remaining Periods (Fallback logic added here)
     SCHOOL_CONFIG.assignments.forEach(req => {
         let remainingPeriods = req.periodsPerWeek - req.assignedCount;
         for (let i = 0; i < remainingPeriods; i++) {
             let placed = false;
             let preferredDayIndex = (i + req.assignedCount) % 5; 
             
-            // ஒரு நாளில் இடம் இல்லையென்றால் அடுத்தடுத்த நாட்களில் தேட புதிய சுழற்சி (Fallback Loop)
             for (let d = 0; d < 5; d++) {
                 let checkDayIndex = (preferredDayIndex + d) % 5;
                 let checkDay = daysOfWeek[checkDayIndex];
                 
                 for (let period of SCHOOL_CONFIG.regularTimings) {
                     if (period.type === 'break' || period.type === 'fixed') continue; 
-                    
                     let timeKey = `${checkDay}-${period.label}`;
                     
                     if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
                         let countToday = dailySubjectCount[req.className]?.[checkDay]?.[req.subjectName] || 0;
-                        if (countToday >= 2) continue; // Max 2 periods of the same subject per day
+                        if (countToday >= 2) continue; 
                         
                         generatedWeeklyTimetable.push({
                             day: checkDay, period: period.label, time: `${period.start} - ${period.end}`,
@@ -159,21 +167,16 @@ function generateAutoTimetable() {
                         teacherAvail[req.teacherName][timeKey] = true;
                         if (!classAvail[req.className]) classAvail[req.className] = {};
                         classAvail[req.className][timeKey] = true;
-                        
                         if (!dailySubjectCount[req.className]) dailySubjectCount[req.className] = {};
                         if (!dailySubjectCount[req.className][checkDay]) dailySubjectCount[req.className][checkDay] = {};
                         dailySubjectCount[req.className][checkDay][req.subjectName] = countToday + 1;
                         
                         req.assignedCount++;
                         placed = true;
-                        break; // அந்த பீரியட் ஒதுக்கப்பட்டவுடன் Period லூப்பை நிறுத்த வேண்டும்
+                        break; 
                     }
                 }
-                if (placed) break; // இடம் கிடைத்துவிட்டால் Day லூப்பையும் நிறுத்த வேண்டும்
-            }
-            
-            if (!placed) {
-                console.warn(`Warning: Could not find a free slot for ${req.subjectName} in ${req.className}. Timetable is too packed!`);
+                if (placed) break; 
             }
         }
     });
@@ -229,7 +232,7 @@ function renderRegularTimetable() {
     updateStatus(`Showing Grid for: ${filterVal}`);
 }
 
-// --- RENDER 2: EXAM SCHEDULE ---
+// --- RENDER 2: EXAM SCHEDULE (With Level Matching) ---
 function renderExamSchedule() {
     const pattern = document.getElementById('patternSelect').value;
     const activeGrades = SCHOOL_CONFIG.examPatterns[pattern][currentSession];
@@ -252,25 +255,21 @@ function renderExamSchedule() {
     }
 
     let allTeachers = Object.keys(teacherProfiles);
-    if (allTeachers.length === 0) {
-        mainGrid.innerHTML = `<div class="text-red-500 font-bold p-4">No teachers found. Click Sync Data first!</div>`;
-        return;
-    }
+    if (allTeachers.length === 0) return;
 
     let presentTeachers = allTeachers.filter(t => !absentTeachers.includes(t));
-
     if (presentTeachers.length === 0) {
-        mainGrid.innerHTML = `<div class="text-red-500 font-bold p-4">All teachers are marked absent! Cannot generate duty.</div>`;
+        mainGrid.innerHTML = `<div class="text-red-500 font-bold p-4">All teachers are marked absent!</div>`;
         return;
     }
 
     let html = `<div id="examContainer" class="space-y-6">
         <div class="p-4 bg-orange-50 border-l-4 border-orange-500 rounded-r-lg shadow-sm flex flex-col md:flex-row justify-between md:items-center gap-2">
             <div>
-                <h3 class="font-bold text-orange-900 text-lg">Session: ${currentSession === 'FN' ? 'Morning (FN)' : 'Afternoon (AN)'}</h3>
-                <p class="text-sm text-orange-800 font-medium mt-1"><i data-lucide="calendar" class="w-4 h-4 inline-block mr-1 relative -top-0.5"></i>Date: ${selectedDate}</p>
+                <h3 class="font-bold text-orange-900 text-lg">Session: ${currentSession === 'FN' ? 'Morning' : 'Afternoon'}</h3>
+                <p class="text-sm text-orange-800 font-medium mt-1"><i data-lucide="calendar" class="w-4 h-4 inline-block mr-1"></i>Date: ${selectedDate}</p>
             </div>
-            <div class="text-sm bg-orange-200 text-orange-900 px-3 py-1 rounded font-bold">Writing Starts @ ${examData.writingStart}</div>
+            <div class="text-sm bg-orange-200 text-orange-900 px-3 py-1 rounded font-bold">Starts @ ${examData.writingStart}</div>
         </div>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">`;
 
@@ -280,44 +279,47 @@ function renderExamSchedule() {
         const isJunior = grade <= 8;
         const finishTime = isJunior ? examData.juniorEnd : examData.seniorEnd;
         
-        let currentExamSubject = "English"; // Placeholder
-        let eligibleTeachers = presentTeachers.filter(t => !teacherProfiles[t].subjects.has(currentExamSubject));
+        let examGradeVal = getGradeValue(grade);
+        let examCategory = getTeacherCategory(examGradeVal); // உ.ம்: Primary / High
+
+        let eligibleTeachers = presentTeachers.filter(t => !teacherProfiles[t].subjects.has("English")); // Placeholder for subject exclusion
         if (eligibleTeachers.length === 0) eligibleTeachers = presentTeachers; 
         
+        // --- STRICT LEVEL MATCHING ---
+        let levelMatchedTeachers = eligibleTeachers.filter(t => window.teacherLevels[t] === examCategory);
+        if (levelMatchedTeachers.length > 0) {
+            eligibleTeachers = levelMatchedTeachers; // அந்தப் பிரிவில் ஆசிரியர்கள் இருந்தால் அவர்களை மட்டுமே பயன்படுத்து
+        }
+        
+        // --- EQUAL DUTY SORT ---
         eligibleTeachers.sort((a, b) => {
             let examA = tempExamTracker[a] || 0;
             let examB = tempExamTracker[b] || 0;
             if (examA !== examB) return examA - examB; 
-            
             let loadA = window.teacherWorkload[a] || 0;
             let loadB = window.teacherWorkload[b] || 0;
             return loadA - loadB;
         });
         
         let dutyTeacher = eligibleTeachers[0];
+        let teacherCat = window.teacherLevels[dutyTeacher];
         tempExamTracker[dutyTeacher] = (tempExamTracker[dutyTeacher] || 0) + 1;
 
-        let teacherLoad = window.teacherWorkload[dutyTeacher] || 0;
-
         html += `
-            <div class="p-5 border border-gray-200 rounded-xl bg-white shadow-sm hover:border-blue-400 hover:shadow-md transition-all relative overflow-hidden">
+            <div class="p-5 border border-gray-200 rounded-xl bg-white shadow-sm hover:border-blue-400 transition-all relative overflow-hidden">
                 <div class="absolute top-0 left-0 w-full h-1 ${isJunior ? 'bg-green-400' : 'bg-blue-500'}"></div>
                 <div class="flex justify-between items-start mb-4 mt-1">
-                    <div><h4 class="text-2xl font-black text-gray-800">Class ${grade}</h4><span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">${isJunior ? 'Junior' : 'Senior'}</span></div>
+                    <div><h4 class="text-2xl font-black text-gray-800">Class ${grade}</h4><span class="text-xs font-semibold text-gray-500 uppercase tracking-wider">${examCategory} Hall</span></div>
                     <span class="bg-gray-100 text-gray-700 text-xs px-2.5 py-1 rounded-md font-bold border border-gray-200">Hall ${index + 1}</span>
                 </div>
                 <div class="space-y-2 mb-4 bg-gray-50 p-3 rounded-lg border border-gray-100">
-                    <div class="flex justify-between text-sm"><span class="text-gray-500">Duration:</span><span class="font-bold text-gray-700">${isJunior ? '2.5 Hours' : '3.0 Hours'}</span></div>
+                    <div class="flex justify-between text-sm"><span class="text-gray-500">Duration:</span><span class="font-bold text-gray-700">${isJunior ? '2.5 Hrs' : '3.0 Hrs'}</span></div>
                     <div class="flex justify-between text-sm"><span class="text-gray-500">Ends at:</span><span class="font-bold ${isJunior ? 'text-green-600' : 'text-blue-600'}">${finishTime}</span></div>
                 </div>
                 <div class="pt-3 border-t border-gray-100 flex items-center justify-between">
                     <div class="flex flex-col">
                         <span class="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Invigilator Duty</span>
-                        <span class="text-base font-bold text-blue-700 flex items-center gap-1"><i data-lucide="user-check" class="w-4 h-4"></i> ${dutyTeacher}</span>
-                    </div>
-                    <div class="text-right flex flex-col">
-                        <span class="text-[10px] font-bold text-gray-400 uppercase">Regular Load</span>
-                        <span class="text-sm font-black text-gray-600">${teacherLoad} Per.</span>
+                        <span class="text-base font-bold text-blue-700 flex items-center gap-1"><i data-lucide="user-check" class="w-4 h-4"></i> ${dutyTeacher} <span class="text-[10px] font-normal text-gray-400 bg-gray-100 px-1 rounded">${teacherCat}</span></span>
                     </div>
                 </div>
             </div>`;
@@ -326,10 +328,10 @@ function renderExamSchedule() {
     html += `</div></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Exam Schedule Loaded");
+    updateStatus("Exam Schedule Loaded (Segmented by Primary/High/HrSec)");
 }
 
-// --- RENDER 3: SUBSTITUTION MANAGER ---
+// --- RENDER 3: SUBSTITUTION MANAGER (With Level Matching) ---
 function renderSubstituteSchedule() {
     const mainGrid = document.getElementById('mainGrid');
     const day = document.getElementById('subDay').value;
@@ -339,7 +341,7 @@ function renderSubstituteSchedule() {
     const absentTeachers = Array.from(absentCheckboxes).map(cb => cb.value);
 
     if (absentTeachers.length === 0) {
-        mainGrid.innerHTML = `<div class="p-6 bg-red-50 text-red-600 font-bold border border-red-200 rounded-lg flex items-center gap-2"><i data-lucide="alert-circle"></i> Please select at least one absent teacher.</div>`;
+        mainGrid.innerHTML = `<div class="p-6 bg-red-50 text-red-600 font-bold border rounded-lg"><i data-lucide="alert-circle" class="inline"></i> Select absent teachers.</div>`;
         if (window.lucide) window.lucide.createIcons();
         return;
     }
@@ -348,11 +350,7 @@ function renderSubstituteSchedule() {
         slot.day === day && absentTeachers.includes(slot.teacherName.replace('⭐ ', ''))
     );
 
-    if (vacantSlots.length === 0) {
-         mainGrid.innerHTML = `<div class="p-6 bg-green-50 text-green-700 font-bold border border-green-200 rounded-lg flex items-center gap-2"><i data-lucide="check-circle"></i> No classes scheduled for the selected absent teachers on ${day}.</div>`;
-         if (window.lucide) window.lucide.createIcons();
-         return;
-    }
+    if (vacantSlots.length === 0) return;
 
     vacantSlots.sort((a,b) => a.period.localeCompare(b.period, undefined, {numeric: true}));
     let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))];
@@ -364,31 +362,42 @@ function renderSubstituteSchedule() {
                         <p class="text-gray-600 font-bold mt-1"><i data-lucide="calendar" class="w-4 h-4 inline-block mr-1"></i>${selectedDate} <span class="text-gray-400">(${day})</span></p>
                     </div>
                     <div class="flex gap-2">
-                        <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm rounded shadow font-bold transition-colors flex items-center gap-2"><i data-lucide="printer" class="w-4 h-4"></i> Print Sheet</button>
-                        <button onclick="saveDutiesToCloud()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-sm rounded shadow font-bold transition-colors flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Duty Counts</button>
+                        <button onclick="window.print()" class="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 text-sm rounded shadow font-bold flex items-center gap-2"><i data-lucide="printer" class="w-4 h-4"></i> Print</button>
+                        <button onclick="saveDutiesToCloud()" class="bg-green-600 hover:bg-green-700 text-white px-4 py-2 text-sm rounded shadow font-bold flex items-center gap-2"><i data-lucide="save" class="w-4 h-4"></i> Save Counts</button>
                     </div>
                 </div>
                 <div class="overflow-x-auto">
         <table class="w-full text-left border-collapse bg-white shadow-sm border border-gray-200">
             <thead class="bg-red-50 text-red-900 border-b border-red-200">
-                <tr><th class="p-3 border-r">Period</th><th class="p-3 border-r">Class</th><th class="p-3 border-r">Absent Teacher</th><th class="p-3">Assign Substitute (Sorted by Least Load)</th></tr>
+                <tr><th class="p-3 border-r">Period</th><th class="p-3 border-r">Class</th><th class="p-3 border-r">Absent Teacher</th><th class="p-3">Assign Substitute (Level Matched)</th></tr>
             </thead>
             <tbody>`;
 
     let tempDutyTracker = { ...window.subDutyTracker };
 
     vacantSlots.forEach(slot => {
+        let slotGradeVal = getGradeValue(slot.className);
+        let slotCategory = getTeacherCategory(slotGradeVal); // வகுப்புக்குத் தேவையான ஆசிரியர் பிரிவு (உ.ம்: Primary)
+
         let busyThisPeriod = generatedWeeklyTimetable
             .filter(s => s.day === day && s.period === slot.period)
             .map(s => s.teacherName.replace('⭐ ', ''));
 
         let freeTeachers = presentTeachers.filter(t => !busyThisPeriod.includes(t));
         
+        // --- 3-TIER SORTING LOGIC ---
         freeTeachers.sort((a, b) => {
+            // 1. Level Match (Primary for Primary) gets 1st Priority
+            let aMatch = window.teacherLevels[a] === slotCategory ? 0 : 1;
+            let bMatch = window.teacherLevels[b] === slotCategory ? 0 : 1;
+            if (aMatch !== bMatch) return aMatch - bMatch;
+            
+            // 2. Least Sub Duty gets 2nd Priority
             let subA = tempDutyTracker[a] || 0;
             let subB = tempDutyTracker[b] || 0;
             if (subA !== subB) return subA - subB;
             
+            // 3. Least Regular Load gets 3rd Priority
             let loadA = window.teacherWorkload[a] || 0;
             let loadB = window.teacherWorkload[b] || 0;
             return loadA - loadB; 
@@ -402,15 +411,20 @@ function renderSubstituteSchedule() {
         let optionsHtml = freeTeachers.map(t => {
             let dutyCount = window.subDutyTracker[t] || 0;
             let regLoad = window.teacherWorkload[t] || 0;
+            let teacherCat = window.teacherLevels[t];
+            
+            // UI Space-ஐ மிச்சப்படுத்த சுருக்கம் (PR, HS, HSS)
+            let catShort = teacherCat === 'Primary' ? 'PR' : (teacherCat === 'High School' ? 'HS' : 'HSS');
             let isSelected = (t === suggestedTeacher) ? 'selected' : '';
-            return `<option value="${t}" ${isSelected}>${t} (Sub: ${dutyCount} | Load: ${regLoad})</option>`;
+            
+            return `<option value="${t}" ${isSelected}>${t} (${catShort} | Sub: ${dutyCount} | Ld: ${regLoad})</option>`;
         }).join('');
 
         let noFreeTeacherMsg = freeTeachers.length === 0 ? `<option value="">⚠️ No Free Teachers Available!</option>` : '';
 
         html += `<tr class="border-b hover:bg-gray-50">
             <td class="p-3 border-r font-bold text-gray-700">${slot.period}</td>
-            <td class="p-3 border-r font-black text-blue-800">${slot.className}</td>
+            <td class="p-3 border-r font-black text-blue-800">${slot.className} <span class="block text-[10px] text-gray-400 font-normal mt-1">${slotCategory}</span></td>
             <td class="p-3 border-r text-red-600 font-medium line-through">${slot.teacherName.replace('⭐ ', '')} <span class="text-xs text-gray-400">(${slot.subjectName})</span></td>
             <td class="p-3">
                 <select class="w-full p-2 border ${freeTeachers.length === 0 ? 'border-red-300 bg-red-50 text-red-700' : 'border-gray-300'} rounded font-semibold text-green-700 outline-none focus:ring-2 focus:ring-green-400">
@@ -423,10 +437,10 @@ function renderSubstituteSchedule() {
     html += `</tbody></table></div>`;
     mainGrid.innerHTML = html;
     if (window.lucide) window.lucide.createIcons();
-    updateStatus("Substitution Manager Loaded");
+    updateStatus("Substitution Manager Loaded (Segmented by Primary/High/HrSec)");
 }
 
-// --- CLOUD SYNC & HORIZONTAL PARSING ---
+// --- CLOUD SYNC & LEVEL CALCULATION ---
 function populateAbsentTeachersList() {
     let allTeachers = [...new Set(SCHOOL_CONFIG.assignments.map(a => a.teacherName.replace('⭐ ', '')))].sort();
     const listDiv = document.getElementById('absentTeachersList');
@@ -455,12 +469,12 @@ window.syncFromCloud = async function() {
 
         SCHOOL_CONFIG.assignments = [];
         window.teacherWorkload = {}; 
+        window.teacherMaxGrade = {}; // Reset Max Grade Tracker
 
         if (cloudData.assignments && cloudData.assignments.length > 1) {
             cloudData.assignments.slice(1).forEach(row => {
                 let teacherName = String(row[0] || '').trim();
                 let subjectName = String(row[1] || '').trim();
-
                 if (!teacherName) return; 
 
                 for (let i = 2; i < row.length; i += 4) {
@@ -479,9 +493,19 @@ window.syncFromCloud = async function() {
                         });
                         
                         window.teacherWorkload[teacherName] = (window.teacherWorkload[teacherName] || 0) + periods;
+                        
+                        // அதிகபட்ச வகுப்பைக் கண்டுபிடித்தல் (To define category)
+                        let gVal = getGradeValue(cls);
+                        window.teacherMaxGrade[teacherName] = Math.max((window.teacherMaxGrade[teacherName] || 0), gVal);
                     }
                 }
             });
+
+            // ஒவ்வொரு ஆசிரியரும் எந்தப் பிரிவு (Primary/High/HrSec) என்பதைக் கணக்கிடுதல்
+            window.teacherLevels = {};
+            for (let t in window.teacherMaxGrade) {
+                window.teacherLevels[t] = getTeacherCategory(window.teacherMaxGrade[t]);
+            }
             
             updateStatus("Generating Schedule...");
             generateAutoTimetable(); 
@@ -517,15 +541,12 @@ window.saveDutiesToCloud = async function() {
         await response.text();
         updateStatus("Saved Successfully!");
         window.subDutyTracker = finalDutyTracker; 
-        alert("Substitution Duty counts have been permanently saved to the Master Sheet!");
+        alert("Duty counts saved to Master Sheet!");
     } catch (error) {
         updateStatus("Save Failed!");
-        console.error("Error saving to cloud:", error);
-        alert("Failed to save data. Please check your internet connection.");
     }
 };
 
-// --- EXPORT PDF ---
 window.exportPDF = function() {
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
@@ -539,18 +560,10 @@ window.exportPDF = function() {
     } else if (mode === 'substitution') {
         const day = document.getElementById('subDay').value;
         doc.text(`AGMHSS Substitution Duty - ${selectedDate} (${day})`, 14, 15);
-        doc.text("Please use the 'Print Sub Sheet' button on the screen.", 14, 25);
     } else {
-        const filterType = document.getElementById('viewType').value;
         const filterVal = document.getElementById('viewFilter').value;
-        let title = "AGMHSS Timetable";
-        if (filterType === 'class') title += ` - Class ${filterVal}`;
-        if (filterType === 'teacher') title += ` - ${filterVal}`;
-
-        doc.text(title, 14, 15);
+        doc.text(`AGMHSS Timetable - ${filterVal}`, 14, 15);
         doc.autoTable({ html: '#scheduleTable', startY: 20, theme: 'grid', styles: { fontSize: 8 } });
     }
     doc.save(`AGMHSS_Schedule_${selectedDate}.pdf`);
 };
-
-
