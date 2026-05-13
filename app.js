@@ -125,16 +125,23 @@ window.generateGrid = function() {
     else if (mode === 'substitution') renderSubstituteSchedule();
 };
 
-// --- CORE TIMETABLE GENERATOR (With Fallback Loop) ---
+// --- CORE TIMETABLE GENERATOR (With Smart Session Balancing) ---
 function generateAutoTimetable() {
     generatedWeeklyTimetable = []; 
     let teacherAvail = {};
     let classAvail = {};
     let dailySubjectCount = {}; 
+    let teacherSessionCount = {}; // NEW: காலை மற்றும் மதிய பீரியட் கணக்கீடு
 
     if (!SCHOOL_CONFIG.assignments || SCHOOL_CONFIG.assignments.length === 0) return;
-    const firstPeriod = SCHOOL_CONFIG.regularTimings.find(p => p.type === 'class');
+    const teachingPeriods = SCHOOL_CONFIG.regularTimings.filter(p => p.type === 'class');
+    const firstPeriod = teachingPeriods[0];
+    
+    // காலை (FN) மற்றும் மதியம் (AN) எவை என்பதை வரையறுத்தல்
+    const fnPeriodLabels = teachingPeriods.slice(0, 4).map(p => p.label);
+    const anPeriodLabels = teachingPeriods.slice(4, 8).map(p => p.label);
 
+    // Phase 1: Class Teachers Locked to Period 1
     SCHOOL_CONFIG.assignments.forEach(req => {
         req.assignedCount = 0; 
         if (req.isClassTeacher && firstPeriod) {
@@ -149,57 +156,89 @@ function generateAutoTimetable() {
                     teacherAvail[req.teacherName][timeKey] = true;
                     if (!classAvail[req.className]) classAvail[req.className] = {};
                     classAvail[req.className][timeKey] = true;
+                    
+                    // Session Tracker-ல் பதிவு செய்தல்
+                    if (!teacherSessionCount[req.teacherName]) teacherSessionCount[req.teacherName] = {};
+                    if (!teacherSessionCount[req.teacherName][day]) teacherSessionCount[req.teacherName][day] = { FN: 0, AN: 0 };
+                    if (fnPeriodLabels.includes(firstPeriod.label)) teacherSessionCount[req.teacherName][day].FN++;
+                    
                     req.assignedCount++;
                 }
             }
         }
     });
 
+    // Phase 2: Distribute Remaining Periods (With Smart Spread)
     SCHOOL_CONFIG.assignments.forEach(req => {
         let remainingPeriods = req.periodsPerWeek - req.assignedCount;
         for (let i = 0; i < remainingPeriods; i++) {
             let placed = false;
             let preferredDayIndex = (i + req.assignedCount) % 5; 
             
-            for (let d = 0; d < 5; d++) {
-                let checkDayIndex = (preferredDayIndex + d) % 5;
-                let checkDay = daysOfWeek[checkDayIndex];
-                
-                for (let period of SCHOOL_CONFIG.regularTimings) {
-                    if (period.type === 'break' || period.type === 'fixed') continue; 
-                    let timeKey = `${checkDay}-${period.label}`;
+            // முதல் சுற்றில் Strict விதியையும், இடமில்லையென்றால் தளர்வு விதியையும் (Fallback) பயன்படுத்தும் லாஜிக்
+            let attemptLimits = [true, false]; 
+            
+            for (let strictMode of attemptLimits) {
+                for (let d = 0; d < 5; d++) {
+                    let checkDayIndex = (preferredDayIndex + d) % 5;
+                    let checkDay = daysOfWeek[checkDayIndex];
                     
-                    if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
-                        let countToday = dailySubjectCount[req.className]?.[checkDay]?.[req.subjectName] || 0;
-                        if (countToday >= 2) continue; 
+                    for (let period of SCHOOL_CONFIG.regularTimings) {
+                        if (period.type === 'break' || period.type === 'fixed') continue; 
+                        let timeKey = `${checkDay}-${period.label}`;
                         
-                        generatedWeeklyTimetable.push({
-                            day: checkDay, period: period.label, time: `${period.start} - ${period.end}`,
-                            className: req.className, subjectName: req.subjectName, teacherName: req.teacherName
-                        });
-                        
-                        if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
-                        teacherAvail[req.teacherName][timeKey] = true;
-                        if (!classAvail[req.className]) classAvail[req.className] = {};
-                        classAvail[req.className][timeKey] = true;
-                        if (!dailySubjectCount[req.className]) dailySubjectCount[req.className] = {};
-                        if (!dailySubjectCount[req.className][checkDay]) dailySubjectCount[req.className][checkDay] = {};
-                        dailySubjectCount[req.className][checkDay][req.subjectName] = countToday + 1;
-                        
-                        req.assignedCount++;
-                        placed = true;
-                        break; 
+                        if (!teacherAvail[req.teacherName]?.[timeKey] && !classAvail[req.className]?.[timeKey]) {
+                            let countToday = dailySubjectCount[req.className]?.[checkDay]?.[req.subjectName] || 0;
+                            if (countToday >= 2) continue; 
+                            
+                            // --- SMART SESSION LIMIT LOGIC ---
+                            let isFN = fnPeriodLabels.includes(period.label);
+                            let isAN = anPeriodLabels.includes(period.label);
+                            
+                            if (!teacherSessionCount[req.teacherName]) teacherSessionCount[req.teacherName] = {};
+                            if (!teacherSessionCount[req.teacherName][checkDay]) teacherSessionCount[req.teacherName][checkDay] = { FN: 0, AN: 0 };
+                            
+                            let counts = teacherSessionCount[req.teacherName][checkDay];
+                            
+                            // Strict Mode: காலையில் அதிகபட்சம் 3, மதியத்தில் அதிகபட்சம் 3
+                            if (strictMode) {
+                                if (isFN && counts.FN >= 3) continue; // காலையில் கட்டாயம் 1 Free Period வேண்டும்
+                                if (isAN && counts.AN >= 3) continue; // மதியத்திலும் கட்டாயம் 1 Free Period வேண்டும்
+                            }
+                            // ----------------------------------
+                            
+                            generatedWeeklyTimetable.push({
+                                day: checkDay, period: period.label, time: `${period.start} - ${period.end}`,
+                                className: req.className, subjectName: req.subjectName, teacherName: req.teacherName
+                            });
+                            
+                            if (!teacherAvail[req.teacherName]) teacherAvail[req.teacherName] = {};
+                            teacherAvail[req.teacherName][timeKey] = true;
+                            if (!classAvail[req.className]) classAvail[req.className] = {};
+                            classAvail[req.className][timeKey] = true;
+                            if (!dailySubjectCount[req.className]) dailySubjectCount[req.className] = {};
+                            if (!dailySubjectCount[req.className][checkDay]) dailySubjectCount[req.className][checkDay] = {};
+                            dailySubjectCount[req.className][checkDay][req.subjectName] = countToday + 1;
+                            
+                            if (isFN) counts.FN++;
+                            if (isAN) counts.AN++;
+                            
+                            req.assignedCount++;
+                            placed = true;
+                            break; 
+                        }
                     }
+                    if (placed) break; 
                 }
-                if (placed) break; 
+                if (placed) break; // இடம் கிடைத்துவிட்டால் தளர்வு விதி லூப்பை (strictMode) விட்டு வெளியேற வேண்டும்
             }
+            
             if (!placed) {
-                console.warn(`Warning: Could not find a free slot for ${req.subjectName} in ${req.className}. Timetable is too packed!`);
+                console.warn(`Warning: Could not find a free slot for ${req.subjectName} in ${req.className}.`);
             }
         }
     });
 }
-
 // --- RENDER 1: REGULAR TIMETABLE ---
 function renderRegularTimetable() {
     const mainGrid = document.getElementById('mainGrid');
